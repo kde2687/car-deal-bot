@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% if listing %}{{ listing.title }} — CarDeal AR{% else %}Listing Not Found{% endif %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    body { background-color: #f8f9fa; }
+    .score-gauge-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .score-circle {
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      font-size: 2rem;
+      font-weight: 800;
+      border: 8px solid;
+      position: relative;
+    }
+    .score-circle.green  { border-color: #198754; color: #198754; }
+    .score-circle.yellow { border-color: #ffc107; color: #e0a800; }
+    .score-circle.red    { border-color: #dc3545; color: #dc3545; }
+    .score-circle small { font-size: 0.7rem; font-weight: 400; color: #6c757d; margin-top: -4px; }
+    .attr-table td:first-child { font-weight: 600; width: 40%; }
+    .deal-reason-box {
+      background: #e9f7ef;
+      border-left: 4px solid #198754;
+      border-radius: 6px;
+      padding: 1rem 1.2rem;
+      font-size: 0.97rem;
+    }
+    .carousel-inner img {
+      max-height: 400px;
+      object-fit: contain;
+      background: #343a40;
+    }
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container">
+      <a class="navbar-brand fw-bold" href="/">🚗 CarDeal AR</a>
+      <div class="d-flex gap-2">
+        <a href="/" class="btn btn-outline-light btn-sm">
+          <i class="bi bi-arrow-left me-1"></i>Volver a deals
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container pb-5">
+
+    {% if error or not listing %}
+    <div class="alert alert-warning mt-4">
+      <i class="bi bi-exclamation-triangle me-2"></i>
+      {{ error or 'Listing no encontrado.' }}
+      <a href="/" class="alert-link ms-2">Volver al inicio</a>
+    </div>
+
+    {% else %}
+
+    <div class="row g-4">
+
+      <!-- Left: Images + Main Info -->
+      <div class="col-lg-7">
+
+        <!-- Carousel -->
+        {% set images = [] %}
+        {% if listing.raw_data %}
+          {% if listing.raw_data.pictures %}
+            {% set images = listing.raw_data.pictures %}
+          {% elif listing.raw_data.images %}
+            {% set images = listing.raw_data.images %}
+          {% endif %}
+        {% endif %}
+
+        {% if images | length > 0 %}
+        <div id="listingCarousel" class="carousel slide rounded overflow-hidden shadow-sm mb-3" data-bs-ride="carousel">
+          <div class="carousel-indicators">
+            {% for img in images %}
+            <button type="button" data-bs-target="#listingCarousel" data-bs-slide-to="{{ loop.index0 }}"
+                    class="{{ 'active' if loop.first else '' }}"></button>
+            {% endfor %}
+          </div>
+          <div class="carousel-inner bg-dark">
+            {% for img in images %}
+            <div class="carousel-item {{ 'active' if loop.first else '' }}">
+              {% if img is mapping %}
+                <img src="{{ img.get('url') or img.get('src') or img.get('secure_url', '') }}"
+                     class="d-block w-100" alt="{{ listing.title }}"
+                     onerror="this.src=''" />
+              {% else %}
+                <img src="{{ img }}" class="d-block w-100" alt="{{ listing.title }}" onerror="this.src=''" />
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% if images | length > 1 %}
+          <button class="carousel-control-prev" type="button" data-bs-target="#listingCarousel" data-bs-slide="prev">
+            <span class="carousel-control-prev-icon"></span>
+          </button>
+          <button class="carousel-control-next" type="button" data-bs-target="#listingCarousel" data-bs-slide="next">
+            <span class="carousel-control-next-icon"></span>
+          </button>
+          {% endif %}
+        </div>
+        {% elif listing.thumbnail %}
+        <div class="rounded overflow-hidden shadow-sm mb-3 text-center bg-dark">
+          <img src="{{ listing.thumbnail }}" alt="{{ listing.title }}"
+               style="max-height:380px; object-fit:contain; width:100%;"
+               onerror="this.parentElement.innerHTML='<div class=\'p-5 text-muted\'><i class=\'bi bi-car-front display-3\'></i></div>'" />
+        </div>
+        {% else %}
+        <div class="rounded shadow-sm mb-3 d-flex align-items-center justify-content-center bg-secondary text-white"
+             style="height:280px; font-size:5rem;">
+          <i class="bi bi-car-front"></i>
+        </div>
+        {% endif %}
+
+        <!-- Title + Price -->
+        <h2 class="fw-bold mb-1">{{ listing.title or 'Sin título' }}</h2>
+        <div class="d-flex align-items-center gap-3 mb-3">
+          {% if listing.price_ars %}
+          <span class="fs-3 fw-bold text-success">${{ "{:,.0f}".format(listing.price_ars) }} ARS</span>
+          {% endif %}
+          {% if listing.price_usd %}
+          <span class="fs-5 text-muted">${{ "{:,.0f}".format(listing.price_usd) }} USD</span>
+          {% endif %}
+          {% if listing.discount_pct and listing.discount_pct > 0 %}
+          <span class="badge bg-success fs-6">{{ listing.discount_pct | int }}% OFF mercado</span>
+          {% endif %}
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="d-flex gap-2 mb-4">
+          {% if listing.url %}
+          <a href="{{ listing.url }}" target="_blank" class="btn btn-primary btn-lg">
+            <i class="bi bi-box-arrow-up-right me-2"></i>
+            Ver en {{ listing.source | capitalize if listing.source else 'Fuente' }}
+          </a>
+          {% endif %}
+          <a href="/" class="btn btn-outline-secondary btn-lg">
+            <i class="bi bi-arrow-left me-1"></i>Volver
+          </a>
+        </div>
+
+        <!-- Deal Reason Box -->
+        {% if listing.deal_reason %}
+        <div class="deal-reason-box mb-4">
+          <div class="fw-semibold text-success mb-1"><i class="bi bi-graph-down-arrow me-2"></i>Análisis de precio</div>
+          {{ listing.deal_reason }}
+        </div>
+        {% endif %}
+
+      </div>
+
+      <!-- Right: Score + Attributes -->
+      <div class="col-lg-5">
+
+        <!-- Score Gauge -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-body d-flex align-items-center gap-4">
+            <div class="score-gauge-wrap">
+              {% set score_int = listing.score | int %}
+              {% if score_int >= 60 %}
+                <div class="score-circle green">
+              {% elif score_int >= 30 %}
+                <div class="score-circle yellow">
+              {% else %}
+                <div class="score-circle red">
+              {% endif %}
+                {{ score_int }}
+                <small>/100</small>
+              </div>
+              <div class="text-muted small mt-2 text-center">Deal Score</div>
+              <div class="text-muted" style="font-size:0.72rem; text-align:center; max-width:100px; line-height:1.3; margin-top:4px;">
+                Descuento vs. mercado, ajustado por precisión del benchmark
+              </div>
+            </div>
+            <div class="flex-grow-1">
+              {% if listing.is_deal %}
+                <span class="badge bg-success fs-6 mb-2"><i class="bi bi-check-circle me-1"></i>DEAL ACTIVO</span>
+              {% else %}
+                <span class="badge bg-secondary fs-6 mb-2">No es deal</span>
+              {% endif %}
+              <div class="text-muted small">
+                {% if listing.discount_pct %}
+                  {% if listing.discount_pct > 0 %}
+                    <i class="bi bi-arrow-down-circle text-success me-1"></i>
+                    {{ listing.discount_pct | int }}% por debajo del mercado
+                  {% else %}
+                    <i class="bi bi-arrow-up-circle text-danger me-1"></i>
+                    {{ (listing.discount_pct * -1) | int }}% por encima del mercado
+                  {% endif %}
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Attributes Table -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-list-check me-2"></i>Atributos
+          </div>
+          <div class="card-body p-0">
+            <table class="table table-sm table-bordered attr-table mb-0">
+              <tbody>
+                <tr><td>Marca</td><td>{{ listing.brand or '—' }}</td></tr>
+                <tr><td>Modelo</td><td>{{ listing.model or '—' }}</td></tr>
+                <tr><td>Año</td><td>{{ listing.year or '—' }}</td></tr>
+                <tr><td>Kilómetros</td><td>{% if listing.km %}{{ "{:,}".format(listing.km) }} km{% else %}—{% endif %}</td></tr>
+                <tr><td>Combustible</td><td>{{ listing.fuel or '—' }}</td></tr>
+                <tr><td>Transmisión</td><td>{{ listing.transmission or '—' }}</td></tr>
+                <tr><td>Condición</td><td>
+                  {% if listing.condition == 'new' %}
+                    <span class="badge bg-success">Nuevo</span>
+                  {% elif listing.condition == 'used' %}
+                    <span class="badge bg-secondary">Usado</span>
+                  {% else %}
+                    {{ listing.condition or '—' }}
+                  {% endif %}
+                </td></tr>
+                <tr><td>Fuente</td><td>
+                  {% if listing.source == 'mercadolibre' %}
+                    <span class="badge bg-warning text-dark">MercadoLibre</span>
+                  {% elif listing.source == 'kavak' %}
+                    <span class="badge bg-info text-dark">Kavak</span>
+                  {% else %}
+                    {{ listing.source or '—' }}
+                  {% endif %}
+                </td></tr>
+                <tr><td>ID</td><td class="text-muted small text-break">{{ listing.id }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Market Context -->
+        <div class="card shadow-sm mb-4">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-clock-history me-2"></i>Historial
+          </div>
+          <div class="card-body">
+            <div class="row g-2 text-center">
+              <div class="col-6">
+                <div class="text-muted small">Primer avistamiento</div>
+                <div class="fw-semibold">
+                  {% if listing.first_seen %}
+                    {{ listing.first_seen.strftime('%d/%m/%Y') }}<br>
+                    <small class="text-muted">{{ listing.first_seen.strftime('%H:%M') }} UTC</small>
+                  {% else %}—{% endif %}
+                </div>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">Última vez visto</div>
+                <div class="fw-semibold">
+                  {% if listing.last_seen %}
+                    {{ listing.last_seen.strftime('%d/%m/%Y') }}<br>
+                    <small class="text-muted">{{ listing.last_seen.strftime('%H:%M') }} UTC</small>
+                  {% else %}—{% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% if listing.url %}
+        <a href="{{ listing.url }}" target="_blank" class="btn btn-outline-primary w-100">
+          <i class="bi bi-box-arrow-up-right me-2"></i>
+          Ver publicación original en {{ listing.source | capitalize if listing.source else 'fuente' }}
+        </a>
+        {% endif %}
+
+      </div>
+    </div>
+
+    <!-- Distribution Chart -->
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-bar-chart-line me-2"></i>Distribución de precios
+            <span class="text-muted fw-normal small ms-2">
+              — <span id="distSampleCount">…</span> autos comparables (misma marca/motor, ±2 años)
+            </span>
+          </div>
+          <div class="card-body">
+            <div id="distLowDataWarn" style="display:none" class="alert alert-warning py-2 mb-3 small">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              <strong>Muestra limitada</strong> — pocos comparables en la DB para este modelo y año.
+              La distribución mejorará con los próximos escaneos (mayor cobertura de ML programada).
+            </div>
+            <div class="d-flex gap-4 mb-3 flex-wrap">
+              <span id="distPercentileWrap" style="display:none" class="badge bg-success fs-6">
+                <i class="bi bi-graph-down-arrow me-1"></i><span id="distPercentile"></span>
+              </span>
+              <span id="distQualityWrap" style="display:none" class="text-muted small">
+                <i class="bi bi-patch-check me-1 text-primary"></i>
+                Precisión del benchmark: <strong id="distQuality"></strong>
+              </span>
+            </div>
+            <div style="position:relative; max-height:300px;">
+              <canvas id="distChart"></canvas>
+            </div>
+            <div class="d-flex gap-4 mt-2 small text-muted">
+              <span><span style="display:inline-block;width:12px;height:12px;background:rgba(13,110,253,0.45);border-radius:2px;"></span> Comparables</span>
+              <span><span style="display:inline-block;width:12px;height:12px;background:rgba(220,53,69,0.85);border-radius:2px;"></span> Este auto</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price History Chart -->
+    <div id="historyChartWrap" style="display:none" class="row">
+      <div class="col-12">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header fw-semibold">
+            <i class="bi bi-clock-history me-2"></i>Evolución del precio
+          </div>
+          <div class="card-body">
+            <div style="position:relative; max-height:220px;">
+              <canvas id="historyChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+
+  <footer class="text-center text-muted py-3 border-top mt-4">
+    <small>CarDeal AR &mdash; deal-hunting bot</small>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  {% if listing %}
+  <script>
+    (async function() {
+      const listingId = {{ listing.id | tojson }};
+      let data;
+      try {
+        const r = await fetch('/api/comparables/' + encodeURIComponent(listingId));
+        data = await r.json();
+      } catch(e) { return; }
+
+      const MIN_MEANINGFUL = 15;
+      if (!data.comparables_usd || data.comparables_usd.length < 2) return;
+      if (data.comparables_usd.length < MIN_MEANINGFUL) {
+        document.getElementById('distLowDataWarn').style.display = '';
+      }
+
+      const prices = data.comparables_usd;
+      const curPrice = data.listing_price_usd;
+      const mktPrice = data.market_price_usd;
+
+      // Build histogram bins
+      const allPrices = curPrice ? [...prices, curPrice] : prices;
+      const minP = Math.min(...allPrices) * 0.92;
+      const maxP = Math.max(...allPrices) * 1.08;
+      const BIN_COUNT = Math.min(20, Math.max(8, Math.round(prices.length / 3)));
+      const binWidth = (maxP - minP) / BIN_COUNT;
+
+      const binLabels = [];
+      const binCounts = [];
+      for (let i = 0; i < BIN_COUNT; i++) {
+        const lo = minP + i * binWidth;
+        const hi = lo + binWidth;
+        binLabels.push('$' + Math.round((lo + hi) / 2).toLocaleString());
+        binCounts.push(prices.filter(p => p >= lo && p < hi).length);
+      }
+
+      // Current listing bin index
+      const curBin = curPrice
+        ? Math.min(BIN_COUNT - 1, Math.floor((curPrice - minP) / binWidth))
+        : -1;
+
+      const barColors = binCounts.map((_, i) =>
+        i === curBin ? 'rgba(220, 53, 69, 0.85)' : 'rgba(13, 110, 253, 0.45)'
+      );
+      const borderColors = binCounts.map((_, i) =>
+        i === curBin ? '#dc3545' : 'rgba(13, 110, 253, 0.7)'
+      );
+
+      const ctx = document.getElementById('distChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: binLabels,
+          datasets: [{
+            label: 'Autos comparables',
+            data: binCounts,
+            backgroundColor: barColors,
+            borderColor: borderColors,
+            borderWidth: 1.5,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => {
+                  const i = items[0].dataIndex;
+                  const lo = Math.round(minP + i * binWidth);
+                  const hi = Math.round(lo + binWidth);
+                  return `USD $${lo.toLocaleString()} – $${hi.toLocaleString()}`;
+                },
+                label: (item) => `${item.raw} auto${item.raw !== 1 ? 's' : ''}`,
+              }
+            },
+            annotation: undefined,
+          },
+          scales: {
+            x: {
+              ticks: { maxRotation: 45, font: { size: 11 } },
+              grid: { display: false },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1, font: { size: 11 } },
+              title: { display: true, text: 'Cantidad de autos', font: { size: 11 } },
+            }
+          }
+        }
+      });
+
+      // Update stats
+      document.getElementById('distSampleCount').textContent = prices.length;
+      if (data.percentile_rank !== null && data.percentile_rank !== undefined) {
+        document.getElementById('distPercentile').textContent =
+          `Este auto es más barato que el ${100 - data.percentile_rank}% de los comparables`;
+        document.getElementById('distPercentileWrap').style.display = '';
+      }
+      if (data.confidence_index) {
+        document.getElementById('distQuality').textContent = data.confidence_index + '%';
+        document.getElementById('distQualityWrap').style.display = '';
+      }
+
+      // Price history chart
+      if (data.price_history && data.price_history.length > 1) {
+        const phDates = data.price_history.map(h => h.date.slice(0, 10));
+        const phPrices = data.price_history.map(h => h.price_ars);
+        const phColors = data.price_history.map(h =>
+          h.event === 'sold' ? '#dc3545' : h.event === 'price_change' ? '#ffc107' : '#198754'
+        );
+        const ctx2 = document.getElementById('historyChart').getContext('2d');
+        new Chart(ctx2, {
+          type: 'line',
+          data: {
+            labels: phDates,
+            datasets: [{
+              label: 'Precio ARS',
+              data: phPrices,
+              borderColor: '#0d6efd',
+              backgroundColor: 'rgba(13,110,253,0.08)',
+              pointBackgroundColor: phColors,
+              pointRadius: 5,
+              tension: 0.2,
+              fill: true,
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { font: { size: 10 } } },
+              y: {
+                ticks: {
+                  font: { size: 10 },
+                  callback: v => '$' + (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : (v/1e3).toFixed(0)+'K')
+                }
+              }
+            }
+          }
+        });
+        document.getElementById('historyChartWrap').style.display = '';
+      }
+    })();
+  </script>
+  {% endif %}
+</body>
+</html>

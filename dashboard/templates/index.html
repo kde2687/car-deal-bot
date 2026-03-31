@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CarDeal AR — {{ 'Deals' if view == 'deals' else 'All Listings' }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    body { background-color: #f8f9fa; }
+    .navbar-brand { font-weight: 700; font-size: 1.3rem; }
+    .card-img-wrap {
+      position: relative;
+      height: 180px;
+      overflow: hidden;
+      background: #e9ecef;
+    }
+    .card-img-wrap img {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+    }
+    .card-img-placeholder {
+      width: 100%;
+      height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #dee2e6;
+      color: #6c757d;
+      font-size: 3rem;
+    }
+    .badge-score {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      font-size: 0.8rem;
+      padding: 0.35em 0.6em;
+      border-radius: 0.4rem;
+      font-weight: 700;
+      z-index: 2;
+    }
+    .badge-discount {
+      position: absolute;
+      top: 0.5rem;
+      left: 0.5rem;
+      font-size: 0.75rem;
+      padding: 0.3em 0.55em;
+      border-radius: 0.4rem;
+      font-weight: 700;
+      z-index: 2;
+    }
+    .badge-percentile {
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.2em 0.55em;
+      border-radius: 0.35rem;
+      letter-spacing: 0.01em;
+    }
+    .ref-badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 0.15em 0.45em;
+      border-radius: 0.3rem;
+      letter-spacing: 0.02em;
+      opacity: 0.85;
+    }
+    .card-title-truncate {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+    .deal-card {
+      transition: opacity 0.4s ease, transform 0.3s ease;
+      height: 100%;
+    }
+    .deal-card.hidden-card {
+      display: none !important;
+    }
+    .deal-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .stat-card {
+      border-left: 4px solid #0d6efd;
+    }
+    .price-text {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #198754;
+    }
+    .filter-card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .pagination { justify-content: center; }
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">🚗 CarDeal AR</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'deals' else '' }}" href="/">
+              <i class="bi bi-star-fill me-1"></i>Deals
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'all' else '' }}" href="/all">
+              <i class="bi bi-list-ul me-1"></i>All Listings
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {{ 'active' if view == 'hidden' else '' }}" href="/hidden">
+              <i class="bi bi-eye-slash me-1"></i>Ocultos
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="/api/deals" target="_blank">
+              <i class="bi bi-code-slash me-1"></i>API
+            </a>
+          </li>
+        </ul>
+        <span class="navbar-text text-secondary">
+          <i class="bi bi-clock me-1"></i>
+          {% if last_updated %}Last updated: {{ last_updated | time_ago }}{% else %}No scans yet{% endif %}
+        </span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid px-4">
+
+    <!-- Stats Row -->
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="card stat-card h-100">
+          <div class="card-body py-3">
+            <div class="text-muted small mb-1"><i class="bi bi-trophy me-1"></i>Total Deals</div>
+            <div class="fs-4 fw-bold text-primary">{{ total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="{% if filters.new_today %}?{% else %}?new_today=1{% endif %}" class="text-decoration-none">
+          <div class="card stat-card h-100" style="border-left-color: #198754;{% if filters.new_today %} background:#f0fff4; border:2px solid #198754!important;{% endif %}">
+            <div class="card-body py-3">
+              <div class="text-muted small mb-1"><i class="bi bi-calendar-day me-1"></i>New Today {% if filters.new_today %}<span class="badge bg-success ms-1">✓</span>{% endif %}</div>
+              <div class="fs-4 fw-bold text-success">{{ new_today }}</div>
+            </div>
+          </div>
+        </a>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card stat-card h-100" style="border-left-color: #ffc107;">
+          <div class="card-body py-3">
+            <div class="text-muted small mb-1"><i class="bi bi-bar-chart me-1"></i>Avg Score</div>
+            <div class="fs-4 fw-bold text-warning">{{ avg_score }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card stat-card h-100" style="border-left-color: #6c757d;">
+          <div class="card-body py-3">
+            <div class="text-muted small mb-1"><i class="bi bi-clock me-1"></i>Last Scan</div>
+            <div class="fs-5 fw-semibold text-secondary">
+              {% if last_updated %}{{ last_updated | time_ago }}{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="card filter-card mb-4">
+      <div class="card-body">
+        <form method="GET" action="{{ '/' if view == 'deals' else '/all' }}" class="row g-2 align-items-end">
+
+          <!-- 1. Marca -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-car-front me-1"></i>Marca</label>
+            <select name="brand" class="form-select form-select-sm" id="brandSelect">
+              <option value="">Todas</option>
+              {% for b in unique_brands %}
+                <option value="{{ b }}" {{ 'selected' if filters.brand == b else '' }}>{{ b }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- 2. Modelo -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-tag me-1"></i>Modelo</label>
+            <input type="text" name="model" class="form-control form-control-sm"
+                   placeholder="ej: Hilux, Gol…" value="{{ filters.model }}" />
+          </div>
+
+          <!-- 2b. Ciudad -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-pin-map me-1"></i>Ciudad del vehículo</label>
+            <input type="text" name="city" class="form-control form-control-sm"
+                   placeholder="ej: Rosario, CABA…" value="{{ filters.city }}"
+                   list="cityList" autocomplete="off" />
+            <datalist id="cityList">
+              {% for c in unique_cities %}
+                <option value="{{ c }}">
+              {% endfor %}
+            </datalist>
+          </div>
+
+          <!-- 3. Ciudad origen + distancia -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1">
+              <i class="bi bi-house-fill me-1"></i>Mi ciudad
+            </label>
+            <input type="text" name="origin_city" class="form-control form-control-sm"
+                   value="{{ filters.origin_city or 'Darregueira' }}"
+                   list="originCityList" autocomplete="off" />
+            <datalist id="originCityList">
+              {% for c in all_origin_cities %}
+                <option value="{{ c|title }}">
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="col-6 col-md-1">
+            <label class="form-label small fw-semibold mb-1">
+              <i class="bi bi-geo-alt me-1"></i>Dist. máx
+            </label>
+            <input type="number" name="max_distance" class="form-control form-control-sm"
+                   placeholder="km" value="{{ filters.max_distance }}" min="0" step="50" />
+          </div>
+
+          <!-- 4. Año min/max -->
+          <div class="col-3 col-md-1">
+            <label class="form-label small fw-semibold mb-1">Año mín</label>
+            <input type="number" name="min_year" class="form-control form-control-sm"
+                   placeholder="2015" value="{{ filters.min_year }}" min="1990" max="2030" />
+          </div>
+          <div class="col-3 col-md-1">
+            <label class="form-label small fw-semibold mb-1">Año máx</label>
+            <input type="number" name="max_year" class="form-control form-control-sm"
+                   placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
+          </div>
+
+          <!-- 5. KM máx -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1">KM máx</label>
+            <input type="number" name="max_km" class="form-control form-control-sm"
+                   placeholder="150000" value="{{ filters.max_km }}" min="0" step="10000" />
+          </div>
+
+          <!-- 6. Score mín -->
+          <div class="col-6 col-md-1">
+            <label class="form-label small fw-semibold mb-1">
+              Score ≥ <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>
+            </label>
+            <input type="range" name="min_score" class="form-range"
+                   min="0" max="100" value="{{ filters.min_score if filters.min_score != '' else '0' }}"
+                   oninput="document.getElementById('scoreVal').textContent = this.value" />
+          </div>
+
+          <!-- Buttons -->
+          <div class="col-12 col-md-1 d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm w-100">
+              <i class="bi bi-funnel-fill"></i>
+            </button>
+            <a href="{{ '/' if view == 'deals' else '/all' }}" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-x-lg"></i>
+            </a>
+          </div>
+
+        </form>
+      </div>
+    </div>
+
+    <!-- Controls Row -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="text-muted small">
+        Mostrando <strong>{{ listings | length }}</strong> de <strong>{{ total }}</strong> resultados
+      </div>
+      <button id="toggleHidden" class="btn btn-outline-secondary btn-sm" onclick="toggleHiddenCards()">
+        <i class="bi bi-eye me-1"></i>Mostrar ocultos
+      </button>
+    </div>
+
+    <!-- Card Grid -->
+    {% if listings %}
+    <div class="row g-3 mb-4" id="cardsContainer">
+      {% for listing in listings %}
+      <div class="col-lg-3 col-md-4 col-sm-6" id="card-wrap-{{ loop.index }}"
+           data-listing-id="{{ listing.id }}">
+        <div class="card deal-card" id="card-{{ listing.id | replace(':', '-') | replace('/', '-') }}"
+             onclick="cardClick(event, '/listing/{{ listing.id }}')" style="cursor:pointer">
+
+          <div class="card-img-wrap">
+            {% if listing.thumbnail %}
+              <img src="{{ listing.thumbnail }}" alt="{{ listing.title }}"
+                   onerror="this.parentElement.innerHTML='<div class=\'card-img-placeholder\'><i class=\'bi bi-car-front\'></i></div>'" />
+            {% else %}
+              <div class="card-img-placeholder">
+                <i class="bi bi-car-front"></i>
+              </div>
+            {% endif %}
+
+            <!-- Score badge (top-right) -->
+            {% if listing.score >= 20 %}
+              <span class="badge-score badge bg-success">{{ listing.score | int }}</span>
+            {% elif listing.score >= 10 %}
+              <span class="badge-score badge bg-warning text-dark">{{ listing.score | int }}</span>
+            {% elif listing.score > 0 %}
+              <span class="badge-score badge bg-secondary">{{ listing.score | int }}</span>
+            {% endif %}
+
+          </div>
+
+          <div class="card-body pb-1">
+            <div class="card-title-truncate mb-1" title="{{ listing.title }}">
+              {{ listing.title or 'Sin título' }}
+            </div>
+            <div class="price-text mb-1">
+              {% if listing.price_ars %}
+                ${{ listing.price_ars | format_price }} ARS
+              {% elif listing.price_usd %}
+                ${{ listing.price_usd | format_price }} USD
+              {% else %}
+                Sin precio
+              {% endif %}
+            </div>
+            <!-- Percentile + discount + ref_type -->
+            {% if listing.market_price_ars and listing.discount_pct is not none %}
+              {% set dp = listing.discount_pct | float %}
+              <div class="d-flex align-items-center gap-1 mb-2 flex-wrap">
+                {# Quality badge — single metric: how reliable is this benchmark? #}
+                {% if listing.confidence_index is not none and listing.confidence_index > 0 %}
+                  {% set ci = listing.confidence_index %}
+                  {% if ci >= 60 %}
+                    <span class="badge-percentile badge bg-success"
+                          title="Precisión del benchmark: {{ ci }}% — basado en comparables directos del mismo modelo y año">{{ ci }}% precisión</span>
+                  {% elif ci >= 35 %}
+                    <span class="badge-percentile badge bg-warning text-dark"
+                          title="Precisión del benchmark: {{ ci }}% — referencia amplia o mercado con dispersión de precios">{{ ci }}% precisión</span>
+                  {% else %}
+                    <span class="badge-percentile badge bg-secondary"
+                          title="Precisión del benchmark: {{ ci }}% — pocos comparables directos disponibles">{{ ci }}% precisión</span>
+                  {% endif %}
+                {% endif %}
+                {# Discount % #}
+                <span class="small {% if dp >= 15 %}text-success fw-semibold{% elif dp >= 0 %}text-success{% elif dp >= -10 %}text-warning{% else %}text-danger{% endif %}">
+                  {% if dp >= 0 %}↓{{ dp | int }}%{% else %}↑{{ (dp * -1) | int }}%{% endif %}
+                </span>
+                <span class="text-muted small">ref. ${{ listing.market_price_ars | format_price }}</span>
+                {# Reference type badge #}
+                {% if listing.ref_type and listing.ref_type != 'cold' %}
+                  {% set rt = listing.ref_type %}
+                  {% if rt == 'exact' %}
+                    <span class="ref-badge badge bg-success bg-opacity-25 text-success">exact</span>
+                  {% elif rt == 'exact_nokm' %}
+                    <span class="ref-badge badge bg-success bg-opacity-25 text-success">±1yr</span>
+                  {% elif rt == 'broad' %}
+                    <span class="ref-badge badge bg-warning bg-opacity-25 text-warning">±3yr</span>
+                  {% elif rt == 'curve' %}
+                    <span class="ref-badge badge bg-info bg-opacity-25 text-info">curve</span>
+                  {% elif rt == 'brand_fallback' %}
+                    <span class="ref-badge badge bg-secondary bg-opacity-25 text-secondary">brand</span>
+                  {% elif rt == 'ml_model' %}
+                    <span class="ref-badge badge bg-primary bg-opacity-25 text-primary">ML</span>
+                  {% endif %}
+                {% endif %}
+              </div>
+            {% else %}
+              <div class="small text-muted mb-2"><i class="bi bi-dash-circle me-1"></i>Sin ref. de mercado</div>
+            {% endif %}
+            <div class="row g-0 text-muted small mb-1">
+              <div class="col-6">
+                <i class="bi bi-speedometer2 me-1"></i>
+                {% if listing.km %}{{ "{:,}".format(listing.km) }} km{% else %}N/A{% endif %}
+              </div>
+              <div class="col-6">
+                <i class="bi bi-calendar3 me-1"></i>{{ listing.year or 'N/A' }}
+              </div>
+            </div>
+            <div class="row g-0 text-muted small">
+              <div class="col-6 text-truncate">
+                <i class="bi bi-gear me-1"></i>{{ listing.transmission or '—' }}
+              </div>
+              <div class="col-6 text-truncate">
+                <i class="bi bi-fuel-pump me-1"></i>{{ listing.fuel or '—' }}
+              </div>
+            </div>
+            {% if listing.distance_km is not none %}
+            <div class="text-muted small mt-1">
+              <i class="bi bi-geo-alt me-1"></i>
+              {% if listing.seller_city %}{{ listing.seller_city }} — {% endif %}
+              <strong>{{ listing.distance_km | int }} km</strong> de {{ origin_name }}
+            </div>
+            {% elif listing.seller_city %}
+            <div class="text-muted small mt-1">
+              <i class="bi bi-geo-alt me-1"></i>{{ listing.seller_city }}
+            </div>
+            {% endif %}
+            <!-- Panel data row -->
+            <div class="d-flex gap-2 text-muted small mt-1 flex-wrap">
+              {% if listing.first_seen %}
+                {% set dom = ((listing.last_seen or listing.first_seen) - listing.first_seen).days %}
+                <span title="Días en mercado">
+                  <i class="bi bi-clock-history me-1"></i>{{ dom }}d
+                </span>
+              {% endif %}
+              {% if listing.price_changes_count and listing.price_changes_count > 0 %}
+                <span class="text-warning" title="{{ listing.price_changes_count }} cambio(s) de precio">
+                  <i class="bi bi-arrow-down-short"></i>×{{ listing.price_changes_count }}
+                </span>
+              {% endif %}
+              {% if listing.status == 'sold' %}
+                <span class="badge bg-dark text-white" style="font-size:0.65rem"
+                      title="Vendido — precio de clearing real">VENDIDO</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="card-footer bg-transparent d-flex justify-content-between align-items-center pt-1">
+            <span class="badge {% if listing.source == 'mercadolibre' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %} small">
+              {% if listing.source == 'mercadolibre' %}ML{% elif listing.source == 'kavak' %}Kavak{% else %}{{ listing.source }}{% endif %}
+            </span>
+            <div class="d-flex gap-1">
+              <a href="/listing/{{ listing.id }}" class="btn btn-outline-secondary btn-sm py-0 px-2">
+                <i class="bi bi-info-circle"></i>
+              </a>
+              <a href="{{ listing.url }}" target="_blank" class="btn btn-primary btn-sm py-0 px-2">
+                Ver
+              </a>
+              {% if view == 'hidden' %}
+              <button class="btn btn-outline-success btn-sm py-0 px-2"
+                      onclick="unhideCard('{{ listing.id }}', this)"
+                      title="Restaurar">
+                <i class="bi bi-eye"></i>
+              </button>
+              {% else %}
+              <button class="btn btn-outline-danger btn-sm py-0 px-2"
+                      onclick="hideCard('{{ listing.id }}', this)"
+                      title="Ocultar">
+                <i class="bi bi-eye-slash"></i>
+              </button>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+      <i class="bi bi-search display-1 text-muted"></i>
+      <h4 class="mt-3 text-muted">No se encontraron resultados</h4>
+      <p class="text-muted">Prueba cambiando los filtros o esperá el próximo escaneo.</p>
+    </div>
+    {% endif %}
+
+    <!-- Pagination -->
+    {% if pages > 1 %}
+    <nav aria-label="Paginación" class="mt-2 mb-4">
+      <ul class="pagination">
+        {% if page > 1 %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page - 1 }}{% for k, v in filters.items() %}{% if v %}&{{ k }}={{ v }}{% endif %}{% endfor %}">
+              <i class="bi bi-chevron-left"></i>
+            </a>
+          </li>
+        {% endif %}
+        {% for p in range(1, pages + 1) %}
+          {% if p == page or (p >= page - 2 and p <= page + 2) or p == 1 or p == pages %}
+            {% if p != page and loop.changed(p > 1 and p - 1 != page and (p - 1) < page - 2) %}
+              <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+            <li class="page-item {{ 'active' if p == page else '' }}">
+              <a class="page-link" href="?page={{ p }}{% for k, v in filters.items() %}{% if v %}&{{ k }}={{ v }}{% endif %}{% endfor %}">
+                {{ p }}
+              </a>
+            </li>
+          {% endif %}
+        {% endfor %}
+        {% if page < pages %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page + 1 }}{% for k, v in filters.items() %}{% if v %}&{{ k }}={{ v }}{% endif %}{% endfor %}">
+              <i class="bi bi-chevron-right"></i>
+            </a>
+          </li>
+        {% endif %}
+      </ul>
+    </nav>
+    {% endif %}
+
+  </div><!-- /container -->
+
+  <footer class="text-center text-muted py-3 border-top mt-4">
+    <small>CarDeal AR &mdash; deal-hunting bot &mdash;
+      {% if last_updated %}Last scan: {{ last_updated | time_ago }}{% else %}No scans yet{% endif %}
+    </small>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    function cardClick(e, url) {
+      if (!e.target.closest('a, button')) {
+        window.location.href = url;
+      }
+    }
+
+    const HIDDEN_KEY = 'hidden_deals';
+
+    function getHiddenSet() {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'));
+      } catch (e) {
+        return new Set();
+      }
+    }
+
+    function saveHiddenSet(set) {
+      localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set]));
+    }
+
+    function hideCard(listingId, btn) {
+      fetch('/hide/' + listingId, { method: 'POST' }).then(() => {
+        const allWraps = document.querySelectorAll('[data-listing-id]');
+        allWraps.forEach(wrap => {
+          if (wrap.dataset.listingId === listingId) {
+            const card = wrap.querySelector('.deal-card');
+            if (card) {
+              card.style.opacity = '0';
+              card.style.transform = 'scale(0.95)';
+              setTimeout(() => { wrap.style.display = 'none'; }, 350);
+            }
+          }
+        });
+      });
+    }
+
+    function unhideCard(listingId, btn) {
+      fetch('/unhide/' + listingId, { method: 'POST' }).then(() => {
+        const wrap = btn.closest('[data-listing-id]');
+        if (wrap) {
+          wrap.style.opacity = '0';
+          setTimeout(() => { wrap.style.display = 'none'; }, 300);
+        }
+      });
+    }
+
+    let showingHidden = false;
+
+    function toggleHiddenCards() {
+      const set = getHiddenSet();
+      const btn = document.getElementById('toggleHidden');
+      if (!showingHidden) {
+        // Show all hidden cards
+        document.querySelectorAll('[data-listing-id]').forEach(wrap => {
+          if (set.has(wrap.dataset.listingId)) {
+            wrap.style.display = '';
+            const card = wrap.querySelector('.deal-card');
+            if (card) {
+              card.style.opacity = '0.5';
+              card.style.outline = '2px dashed #dc3545';
+            }
+          }
+        });
+        btn.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Ocultar ocultos';
+        showingHidden = true;
+      } else {
+        document.querySelectorAll('[data-listing-id]').forEach(wrap => {
+          if (set.has(wrap.dataset.listingId)) {
+            wrap.style.display = 'none';
+            const card = wrap.querySelector('.deal-card');
+            if (card) {
+              card.style.opacity = '';
+              card.style.outline = '';
+            }
+          }
+        });
+        btn.innerHTML = '<i class="bi bi-eye me-1"></i>Mostrar ocultos';
+        showingHidden = false;
+      }
+    }
+
+    // On page load: hide all cards whose listing id is in localStorage
+    document.addEventListener('DOMContentLoaded', function () {
+      const set = getHiddenSet();
+      if (set.size === 0) return;
+      document.querySelectorAll('[data-listing-id]').forEach(wrap => {
+        if (set.has(wrap.dataset.listingId)) {
+          wrap.style.display = 'none';
+        }
+      });
+    });
+  </script>
+</body>
+</html>
