@@ -390,4 +390,38 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    @app.route("/api/stats")
+    def api_stats():
+        session = SessionLocal()
+        try:
+            from sqlalchemy import case
+            rows = session.query(
+                Listing.source,
+                func.count(Listing.id).label("total"),
+                func.sum(case((Listing.is_deal == True, 1), else_=0)).label("deals"),
+                func.sum(case((Listing.ref_type == "cold", 1), else_=0)).label("cold"),
+                func.sum(case((Listing.is_agency == True, 1), else_=0)).label("agency"),
+            ).filter(Listing.status == "active").group_by(Listing.source).all()
+
+            sources = [
+                {"source": r.source, "total": r.total, "deals": r.deals or 0,
+                 "cold": r.cold or 0, "agency": r.agency or 0}
+                for r in rows
+            ]
+            total_active = sum(r["total"] for r in sources)
+            total_deals  = sum(r["deals"] for r in sources)
+
+            ref_dist = dict(session.query(Listing.ref_type, func.count(Listing.id))
+                            .filter(Listing.status == "active")
+                            .group_by(Listing.ref_type).all())
+
+            return jsonify({
+                "total_active": total_active,
+                "total_deals": total_deals,
+                "by_source": sources,
+                "ref_type_distribution": ref_dist,
+            })
+        finally:
+            session.close()
+
     return app

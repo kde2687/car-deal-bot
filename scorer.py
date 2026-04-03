@@ -529,12 +529,12 @@ def score_listing(session, listing_dict: dict) -> dict:
     # score/confidence only affects ranking — not deal detection.
     # Tighter reference → lower discount required (we trust the benchmark more).
     _deal_min_discount = {
-        "exact":          5.0,    # same model, ±1yr, similar km — high trust
-        "exact_nokm":     7.0,    # same model, ±1yr
-        "broad":          9.0,    # same model, ±3yr
-        "curve":          12.0,   # depreciation curve interpolation
-        "brand_fallback": 12.0,   # same brand, any model — low trust
-        "ml_model":       9.0,
+        "exact":          4.0,    # same model, ±1yr, similar km — high trust
+        "exact_nokm":     6.0,    # same model, ±1yr
+        "broad":          8.0,    # same model, ±3yr
+        "curve":          10.0,   # depreciation curve interpolation
+        "brand_fallback": 10.0,   # same brand, any model — low trust
+        "ml_model":       8.0,
     }
     is_deal = (
         discount_pct >= _deal_min_discount.get(ref_type, 100.0)
