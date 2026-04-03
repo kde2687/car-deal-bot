@@ -333,26 +333,27 @@
             <!-- Percentile + discount + ref_type -->
             {% if listing.market_price_ars and listing.discount_pct is not none %}
               {% set dp = listing.discount_pct | float %}
-              <div class="d-flex align-items-center gap-1 mb-2 flex-wrap">
-                {# Quality badge — single metric: how reliable is this benchmark? #}
+              <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                {# Discount % — main highlight #}
+                <span class="fw-bold fs-6 {% if dp >= 15 %}text-success{% elif dp >= 0 %}text-success{% elif dp >= -10 %}text-warning{% else %}text-danger{% endif %}"
+                      title="Descuento vs precio promedio de mercado">
+                  {% if dp >= 0 %}↓{{ dp | int }}% off{% else %}↑{{ (dp * -1) | int }}% sobre precio{% endif %}
+                </span>
+                <span class="text-muted small">ref. ${{ listing.market_price_ars | format_price }}</span>
+                {# Precision badge — secondary, right side #}
                 {% if listing.confidence_index is not none and listing.confidence_index > 0 %}
                   {% set ci = listing.confidence_index %}
                   {% if ci >= 60 %}
-                    <span class="badge-percentile badge bg-success"
-                          title="Precisión del benchmark: {{ ci }}% — basado en comparables directos del mismo modelo y año">{{ ci }}% precisión</span>
+                    <span class="badge-percentile badge bg-success ms-auto"
+                          title="Precisión del benchmark: {{ ci }}% — comparables directos mismo modelo y año">{{ ci }}% precisión</span>
                   {% elif ci >= 35 %}
-                    <span class="badge-percentile badge bg-warning text-dark"
-                          title="Precisión del benchmark: {{ ci }}% — referencia amplia o mercado con dispersión de precios">{{ ci }}% precisión</span>
+                    <span class="badge-percentile badge bg-warning text-dark ms-auto"
+                          title="Precisión del benchmark: {{ ci }}% — referencia amplia">{{ ci }}% precisión</span>
                   {% else %}
-                    <span class="badge-percentile badge bg-secondary"
-                          title="Precisión del benchmark: {{ ci }}% — pocos comparables directos disponibles">{{ ci }}% precisión</span>
+                    <span class="badge-percentile badge bg-secondary ms-auto"
+                          title="Precisión del benchmark: {{ ci }}% — pocos comparables">{{ ci }}% precisión</span>
                   {% endif %}
                 {% endif %}
-                {# Discount % #}
-                <span class="small {% if dp >= 15 %}text-success fw-semibold{% elif dp >= 0 %}text-success{% elif dp >= -10 %}text-warning{% else %}text-danger{% endif %}">
-                  {% if dp >= 0 %}↓{{ dp | int }}%{% else %}↑{{ (dp * -1) | int }}%{% endif %}
-                </span>
-                <span class="text-muted small">ref. ${{ listing.market_price_ars | format_price }}</span>
                 {# Reference type badge #}
                 {% if listing.ref_type and listing.ref_type != 'cold' %}
                   {% set rt = listing.ref_type %}

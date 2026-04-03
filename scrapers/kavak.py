@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Optional
 
+import httpx
 import config
 
 logger = logging.getLogger(__name__)
@@ -139,44 +140,37 @@ class KavakScraper:
             return False
         return True
 
-    async def fetch_listings(self) -> list:
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError:
-            logger.warning("playwright not installed — skipping Kavak. Run: pip3 install playwright && playwright install chromium")
-            return []
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-AR,es;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    }
 
+    async def fetch_listings(self) -> list:
         listings = []
         seen_ids = set()
 
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
-            context = await browser.new_context(
-                locale="es-AR",
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-            )
-            page = await context.new_page()
-
+        async with httpx.AsyncClient(
+            headers=self._HEADERS, follow_redirects=True, timeout=30.0
+        ) as client:
             for page_num in range(1, 26):
                 url = f"{self.BASE_URL}?page={page_num}"
-                logger.info(f"Kavak (Playwright) page {page_num}: {url}")
+                logger.info(f"Kavak page {page_num}: {url}")
                 try:
-                    await page.goto(url, wait_until="networkidle", timeout=35000)
-                except Exception as e:
-                    logger.warning(f"Kavak page {page_num} load error: {e}")
-                    try:
-                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                        await asyncio.sleep(3)
-                    except Exception:
+                    resp = await client.get(url)
+                    if resp.status_code == 404:
                         break
+                    resp.raise_for_status()
+                    html = resp.text
+                except Exception as e:
+                    logger.warning(f"Kavak page {page_num} error: {e}")
+                    break
 
-                html = await page.content()
-
-                # Extract RSC chunks containing car data
                 chunks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', html, re.DOTALL)
                 page_new = 0
                 for chunk in chunks:
@@ -193,12 +187,10 @@ class KavakScraper:
 
                 if page_new == 0:
                     if page_num == 1:
-                        logger.warning("Kavak: no cars on first page, stopping")
+                        logger.warning("Kavak: no RSC car data found on first page — site may have changed")
                     break
 
-                await asyncio.sleep(2)
-
-            await browser.close()
+                await asyncio.sleep(2.0)
 
         logger.info(f"Kavak total: {len(listings)} listings")
         return listings
