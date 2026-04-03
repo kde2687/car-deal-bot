@@ -224,7 +224,6 @@ class MercadoLibreScraper:
                 params = (
                     f"category={ML_CATEGORY}"
                     f"&condition=used"
-                    f"&seller_type=private"
                     f"&limit={limit}"
                     f"&offset={offset}"
                 )
@@ -254,6 +253,14 @@ class MercadoLibreScraper:
                 total = paging.get("total", 0)
 
                 for item in results:
+                    # Filter agencies via API seller data
+                    if config.ONLY_PRIVATE_SELLERS:
+                        seller = item.get("seller", {}) or {}
+                        seller_type = item.get("seller_type") or seller.get("seller_type") or ""
+                        eshop = seller.get("eshop")
+                        car_dealer = seller.get("car_dealer")
+                        if seller_type in ("car_dealer", "real_estate_agency") or eshop or car_dealer:
+                            continue
                     listing = self._api_result_to_listing(item)
                     if listing and listing["id"] not in seen_ids:
                         seen_ids.add(listing["id"])
