@@ -263,7 +263,7 @@ async def main():
         scheduler.add_job(
             run_market_refresh,
             "interval",
-            hours=6,
+            hours=4,
             id="market_refresh",
             next_run_time=None,
         )
@@ -307,6 +307,11 @@ async def main():
 
     console.print(f"\n[bold green]Running first scan...[/bold green]")
     await run_scan(alerter)
+
+    # Rescore immediately after first scan so listings scored with "cold"
+    # during the scan get re-evaluated with newly accumulated comparables.
+    console.print(f"\n[bold green]Running initial market refresh + rescore...[/bold green]")
+    await run_market_refresh()
 
     console.print(f"\n[bold green]Dashboard running at http://localhost:5000[/bold green]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")

@@ -73,7 +73,7 @@ def _normalize_model(model: str) -> str:
 # Market reference
 # ---------------------------------------------------------------------------
 
-MIN_SAMPLE_SIZE = 3   # minimum comparables — 3 is enough for a reliable median
+MIN_SAMPLE_SIZE = 2   # minimum comparables needed for a market reference
 
 # Confidence index saturation point — n=30 gives full size_score=1.0
 # Based on SE_median ∝ 1/√n (asymptotic theory of quantile estimators)
