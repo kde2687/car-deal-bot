@@ -373,15 +373,15 @@ def _depreciation_curve_estimate(
 
     P0, alpha = curve
     estimated = P0 * math.exp(-alpha * target_age)
-    # Sanity check: estimate must be within 10x of data range
-    if not (min(prices) * 0.1 <= estimated <= max(prices) * 10):
+    # Sanity check: estimate must be within 5x of data range
+    if not (min(prices) * 0.2 <= estimated <= max(prices) * 5):
         return None
     return estimated, len(ages)
 
 
 def _brand_age_fallback(
     session, brand, target_year, usd_rate, half_life, cutoff, exclude_id
-) -> Optional[tuple[float, int]]:
+) -> Optional[tuple[float, int, list[float]]]:
     """
     Same brand, any model, antigüedad within ±2 years of target.
     Returns (weighted_median_usd, sample_count) or None.

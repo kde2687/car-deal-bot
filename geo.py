@@ -39,6 +39,14 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "monte hermoso": (-38.9842, -61.2983),
     "villa iris": (-38.2000, -63.2167),
     "bordenave": (-37.8500, -63.0167),
+    "carhué": (-37.1833, -62.7500),
+    "carhue": (-37.1833, -62.7500),
+    "adolfo alsina": (-37.1833, -62.7500),   # partido de Carhué
+    "punta alta": (-38.8833, -62.0833),
+    "punta-alta": (-38.8833, -62.0833),
+    "nueve de julio": (-35.4500, -60.8833),  # alias of "9 de julio"
+    "san nicolas de los arroyos": (-33.3326, -60.2175),
+    "san nicolás de los arroyos": (-33.3326, -60.2175),
     "jacinto arauz": (-38.0833, -63.4500),
     "tornquist": (-38.0833, -62.2333),
     "general san martín": (-37.9789, -63.6035),    # La Pampa (not GBA)

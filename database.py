@@ -68,9 +68,11 @@ class Listing(Base):
     raw_data = Column(JSON)
 
     __table_args__ = (
-        Index("idx_listing_brand_year",   "brand", "year"),
-        Index("idx_listing_deal_hidden",  "is_deal", "hidden", "is_agency"),
-        Index("idx_listing_score",        "score"),
+        Index("idx_listing_brand_year",       "brand", "year"),
+        Index("idx_listing_deal_hidden",      "is_deal", "hidden", "is_agency"),
+        Index("idx_listing_score",            "score"),
+        Index("idx_listing_status_last_seen", "status", "last_seen"),
+        Index("idx_listing_source",           "source"),
     )
 
 

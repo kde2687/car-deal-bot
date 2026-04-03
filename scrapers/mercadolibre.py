@@ -140,16 +140,18 @@ class MercadoLibreScraper:
         return "ARS"
 
     # Strong dealer indicators — keywords that appear in agency names or ML dealer badges
+    # NOTE: keep these specific to avoid false positives on private sellers.
+    # Removed: "garage" (private sellers mention "tiene garage"), standalone "certificados"
     _AGENCY_KEYWORDS = (
         "automotor", "automotores", "automotriz",
         "concesion", "concesionaria", "concesionario",
         "agencia", "dealer",
-        "usados certificados", "certificados",
+        "usados certificados",
         "vehículo validado", "vehiculo validado",
         "tienda oficial",
-        "s.a.", "s.r.l", "srl",
+        "s.a.", "s.r.l.", "s.r.l", " srl ",
         "multimarca", "cochería", "cocheria",
-        "garage", "plan de ahorro",
+        "plan de ahorro",
     )
 
     def _is_agency(self, li_el) -> bool:
@@ -188,8 +190,9 @@ class MercadoLibreScraper:
         return f"MLA{m.group(1)}" if m else None
 
     _FINANCING_KEYWORDS = (
-        "anticipo", "cuota", "financiado", "facilidades de pago",
+        "financiado", "facilidades de pago",
         "plan de ahorro", "plan ahorro", "financiaci",
+        "precio anticipo", "valor anticipo",
     )
 
     def _parse_card(self, li_el, brand: str) -> Optional[dict]:
