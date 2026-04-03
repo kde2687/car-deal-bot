@@ -1,3 +1,13 @@
+"""
+MercadoLibre scraper — uses the official ML Search API with OAuth2.
+Falls back to HTML scraping if API credentials are not configured.
+
+API advantages over HTML scraping:
+- No cookies needed (tokens auto-refresh every 6h)
+- seller_type=private filters dealers at the source
+- Structured JSON data — no brittle HTML parsing
+- 18,000 requests/hour with auth (vs very low without)
+"""
 import asyncio
 import json
 import logging
@@ -10,6 +20,10 @@ from bs4 import BeautifulSoup
 import config
 
 logger = logging.getLogger(__name__)
+
+ML_API = "https://api.mercadolibre.com"
+ML_SITE = "MLA"
+ML_CATEGORY = "MLA1744"   # Autos y Camionetas — Argentina
 
 ML_HEADERS = {
     "User-Agent": (
@@ -28,14 +42,12 @@ _COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ml_coo
 def _load_cookies() -> dict:
     """Load ML session cookies from env var ML_COOKIES_JSON or ml_cookies.json file."""
     raw = None
-    # 1. Try environment variable first (works on Railway / cloud deployments)
     env_json = os.environ.get("ML_COOKIES_JSON", "")
     if env_json:
         try:
             raw = json.loads(env_json)
         except Exception:
             pass
-    # 2. Fall back to local file
     if raw is None:
         try:
             with open(_COOKIES_FILE) as f:
@@ -47,47 +59,22 @@ def _load_cookies() -> dict:
     except Exception:
         return {}
 
-# Pages per brand (48 items/page). 12 pages = ~576 listings per brand → richer comparables DB.
-PAGES_PER_BRAND = 12
 
-# Regional city slugs for ML — scrape these in addition to the national search.
-# Covers cities near Darregueira + major population centers for comparables.
+# HTML scraper constants (fallback when no API credentials)
+PAGES_PER_BRAND = 12
 REGIONAL_CITY_SLUGS: list[str] = [
     # Near Darregueira (<250km)
-    "bahia-blanca",      # ~130km
-    "punta-alta",        # ~150km
-    "coronel-suarez",    # ~95km
-    "santa-rosa",        # ~166km (La Pampa capital)
-    "tres-arroyos",      # ~200km
-    "general-pico",      # ~236km
-    "tandil",            # ~240km
-    "olavarria",         # ~210km
-    "azul",              # ~195km
-    "pehuajo",           # ~229km
-    "bolivar",           # ~175km
-    "pigüe",             # ~90km
-    "carhue",            # ~80km
-    "guamini",           # ~60km
-    "salliqueloo",       # ~115km
-    "trenque-lauquen",   # ~160km
-    "nueve-de-julio",    # ~200km
-    "lincoln",           # ~210km
-    # Major cities (for comparables — more listings = better market reference)
-    "mar-del-plata",     # ~330km
-    "la-plata",          # ~480km
-    "rosario",           # ~500km
-    "cordoba",           # ~600km
-    "mendoza",           # ~830km
-    "neuquen",           # ~830km
-    "san-luis",          # ~620km
-    "rio-cuarto",        # ~490km
-    "san-nicolas-de-los-arroyos",  # ~520km
-    "junin",             # ~360km
-    "pergamino",         # ~430km
-    "venado-tuerto",     # ~430km
-    "villa-maria",       # ~450km
+    "bahia-blanca", "punta-alta", "coronel-suarez", "santa-rosa",
+    "tres-arroyos", "general-pico", "tandil", "olavarria", "azul",
+    "pehuajo", "bolivar", "pigüe", "carhue", "guamini",
+    "salliqueloo", "trenque-lauquen", "nueve-de-julio", "lincoln",
+    # Major cities (for comparables)
+    "mar-del-plata", "la-plata", "rosario", "cordoba", "mendoza",
+    "neuquen", "san-luis", "rio-cuarto", "san-nicolas-de-los-arroyos",
+    "junin", "pergamino", "venado-tuerto", "villa-maria",
 ]
-REGIONAL_PAGES = 3   # pages per city-brand combo (3 × 48 = up to 144 per city)
+REGIONAL_PAGES = 3
+CATEGORY_PAGES = 12
 
 
 class MercadoLibreScraper:
@@ -98,18 +85,207 @@ class MercadoLibreScraper:
         self.min_year = min_year
         self.max_km = max_km
 
+    # ------------------------------------------------------------------
+    # API-based scraping (primary — requires ML_APP_ID + ML_CLIENT_SECRET)
+    # ------------------------------------------------------------------
+
+    def _api_result_to_listing(self, item: dict) -> Optional[dict]:
+        """Convert ML API search result to our listing dict format."""
+        try:
+            item_id = item.get("id", "")
+            if not item_id:
+                return None
+
+            title = item.get("title", "")
+            price_value = item.get("price")
+            currency = item.get("currency_id", "ARS")
+            permalink = item.get("permalink", "")
+            thumbnail = item.get("thumbnail", "")
+
+            price_ars = price_value if currency == "ARS" else None
+            price_usd = price_value if currency == "USD" else None
+
+            # Price sanity
+            if currency == "ARS":
+                if not price_ars or price_ars < config.MIN_PRICE_ARS or price_ars > config.MAX_PRICE_ARS:
+                    return None
+            elif currency == "USD":
+                if not price_usd or price_usd < config.MIN_PRICE_USD or price_usd > config.MAX_PRICE_USD:
+                    return None
+
+            # Attributes: year, km, fuel, transmission
+            year = None
+            km = None
+            fuel = ""
+            transmission = ""
+            brand_attr = ""
+            model_attr = ""
+
+            for attr in item.get("attributes", []):
+                attr_id = attr.get("id", "")
+                val = attr.get("value_name") or ""
+                if attr_id == "VEHICLE_YEAR":
+                    try:
+                        y = int(val)
+                        if 1990 <= y <= 2030:
+                            year = y
+                    except (ValueError, TypeError):
+                        pass
+                elif attr_id == "KILOMETERS":
+                    try:
+                        km = int(re.sub(r"[^\d]", "", val))
+                    except (ValueError, TypeError):
+                        pass
+                elif attr_id == "FUEL_TYPE":
+                    fuel = val
+                elif attr_id == "TRANSMISSION":
+                    transmission = val
+                elif attr_id == "BRAND":
+                    brand_attr = val
+                elif attr_id == "MODEL":
+                    model_attr = val
+
+            # Filters
+            if year and year < self.min_year:
+                return None
+            if km is not None and km > self.max_km:
+                return None
+            if km is not None and km < config.MIN_KM:
+                return None
+
+            # Year-based minimum price
+            if currency == "ARS" and price_ars and year:
+                if price_ars < config.min_price_for_year(year):
+                    return None
+
+            # Location
+            location = item.get("location") or {}
+            city = ""
+            if isinstance(location, dict):
+                city_obj = location.get("city") or {}
+                city = city_obj.get("name", "") if isinstance(city_obj, dict) else ""
+
+            # Brand / model
+            brand = brand_attr or (title.split()[0] if title else "")
+            model = model_attr or title
+            if model.lower().startswith(brand.lower()):
+                model = model[len(brand):].strip()
+            from scorer import _normalize_model as _nm
+            model = _nm(model).title() if model else model
+
+            return {
+                "id": f"meli:{item_id}",
+                "source": "mercadolibre",
+                "title": title,
+                "brand": brand.title(),
+                "model": model,
+                "year": year,
+                "km": km,
+                "price_ars": price_ars,
+                "price_usd": price_usd,
+                "fuel": fuel,
+                "transmission": transmission,
+                "condition": "used" if (km or 0) > 0 else "new",
+                "url": permalink.split("?")[0] if permalink else "",
+                "thumbnail": thumbnail,
+                "seller_city": city,
+                "raw_data": {
+                    "title": title,
+                    "price_ars": price_ars,
+                    "price_usd": price_usd,
+                    "currency": currency,
+                    "year": year,
+                    "km": km,
+                    "location": city,
+                    "url": permalink,
+                },
+            }
+        except Exception as e:
+            logger.debug(f"ML API result parse error: {e}")
+            return None
+
+    async def _fetch_api_listings(self, client: httpx.AsyncClient, auth_headers: dict) -> list:
+        """Fetch listings using the ML Search API."""
+        from ml_auth import get_auth_headers
+        listings = []
+        seen_ids: set = set()
+
+        # Build search queries: one per brand + one general sweep
+        queries = [(brand, f'q={brand.lower().replace(" ", "+")}') for brand in self.brands]
+        queries.append(("(all)", ""))   # general sweep — catches unlisted brands
+
+        for brand_name, q_param in queries:
+            brand_count = 0
+            offset = 0
+            limit = 50
+            max_results = 1000  # ML API hard cap per query
+
+            while offset < max_results:
+                params = (
+                    f"category={ML_CATEGORY}"
+                    f"&condition=used"
+                    f"&seller_type=private"
+                    f"&limit={limit}"
+                    f"&offset={offset}"
+                )
+                if q_param:
+                    params += f"&{q_param}"
+
+                url = f"{ML_API}/sites/{ML_SITE}/search?{params}"
+                try:
+                    resp = await client.get(url, headers=auth_headers, timeout=20.0)
+                    if resp.status_code == 429:
+                        logger.warning("ML API rate limited, waiting 30s")
+                        await asyncio.sleep(30)
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(f"ML API {resp.status_code} for {brand_name} offset {offset}")
+                        break
+                    data = resp.json()
+                except Exception as e:
+                    logger.warning(f"ML API error for {brand_name}: {e}")
+                    break
+
+                results = data.get("results", [])
+                if not results:
+                    break
+
+                paging = data.get("paging", {})
+                total = paging.get("total", 0)
+
+                for item in results:
+                    listing = self._api_result_to_listing(item)
+                    if listing and listing["id"] not in seen_ids:
+                        seen_ids.add(listing["id"])
+                        listings.append(listing)
+                        brand_count += 1
+
+                offset += limit
+                if offset >= min(total, max_results):
+                    break
+
+                await asyncio.sleep(0.3)   # polite delay — well within 18k/hr limit
+
+            if brand_count:
+                logger.info(f"ML API {brand_name}: {brand_count} listings")
+
+        logger.info(f"ML API total: {len(listings)} listings")
+        return listings
+
+    # ------------------------------------------------------------------
+    # HTML scraping (fallback — used when no API credentials)
+    # ------------------------------------------------------------------
+
     def _brand_slug(self, brand: str) -> str:
         return brand.lower().replace(" ", "-").replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u").replace("ü","u").replace("ë","e").replace("ñ","n")
 
     def _page_url(self, brand: str, offset: int) -> str:
         slug = self._brand_slug(brand)
-        # All pages keep _VendedorTipo_U_ to exclude dealers at URL level
         if offset == 0:
-            return f"{self.BASE_URL}/{slug}/_VendedorTipo_U_"
-        return f"{self.BASE_URL}/{slug}/_VendedorTipo_U__Desde_{offset + 1}"
+            return f"{self.BASE_URL}/{slug}/_VendedorTipo_U_" if slug else f"{self.BASE_URL}/_VendedorTipo_U_"
+        return f"{self.BASE_URL}/{slug}/_VendedorTipo_U__Desde_{offset + 1}" if slug else f"{self.BASE_URL}/_VendedorTipo_U__Desde_{offset + 1}"
 
     def _regional_url(self, brand: str, city_slug: str, page: int = 0) -> str:
-        """Return URL for regional city search with private-seller filter."""
         slug = self._brand_slug(brand)
         if page == 0:
             return f"{self.BASE_URL}/{slug}/{city_slug}/_VendedorTipo_U_"
@@ -117,31 +293,24 @@ class MercadoLibreScraper:
         return f"{self.BASE_URL}/{slug}/{city_slug}/_VendedorTipo_U__Desde_{offset + 1}"
 
     def _parse_price(self, text: str) -> Optional[float]:
-        """Parse '$45.000.000' or '45000000' → 45000000.0"""
         if not text:
             return None
         digits = re.sub(r"[^\d]", "", text)
         return float(digits) if digits else None
 
     def _detect_currency(self, price_container) -> str:
-        """Return 'USD' or 'ARS' by reading aria-label or currency symbol."""
         if not price_container:
             return "ARS"
-        # aria-label is most reliable: "28500 dólares" vs "45000000 pesos argentinos"
         amount_el = price_container.select_one("[aria-label]")
         if amount_el:
             aria = amount_el.get("aria-label", "").lower()
             if "dólar" in aria or "dollar" in aria or "usd" in aria:
                 return "USD"
-        # Fallback: currency symbol element
         symbol_el = price_container.select_one(".andes-money-amount__currency-symbol")
         if symbol_el and "us" in symbol_el.get_text(strip=True).lower():
             return "USD"
         return "ARS"
 
-    # Strong dealer indicators — keywords that appear in agency names or ML dealer badges
-    # NOTE: keep these specific to avoid false positives on private sellers.
-    # Removed: "garage" (private sellers mention "tiene garage"), standalone "certificados"
     _AGENCY_KEYWORDS = (
         "automotor", "automotores", "automotriz",
         "concesion", "concesionaria", "concesionario",
@@ -155,31 +324,21 @@ class MercadoLibreScraper:
     )
 
     def _is_agency(self, li_el) -> bool:
-        """Return True if the listing belongs to a dealer/store, not a private seller."""
-        # 1. poly-component__seller — present only on dealer cards, not private sellers
         seller_el = li_el.select_one(".poly-component__seller, [class*=seller-info]")
         if seller_el and seller_el.get_text(strip=True):
             return True
-
-        # 2. "Tienda oficial" SVG aria-label anywhere in card
         for svg in li_el.find_all("svg"):
             if "oficial" in (svg.get("aria-label") or "").lower():
                 return True
-
-        # 3. Dealer keyword in card text
         card_text = li_el.get_text(" ", strip=True).lower()
         if any(kw in card_text for kw in self._AGENCY_KEYWORDS):
             return True
-
-        # 4. "VALIDADO" certification badge (dealers only)
         for badge in li_el.select("[class*=badge],[class*=pill],[class*=label],[class*=tag]"):
             if "validado" in badge.get_text(strip=True).lower():
                 return True
-
         return False
 
     def _parse_km(self, text: str) -> Optional[int]:
-        """Parse '23.000 Km' → 23000"""
         if not text:
             return None
         digits = re.sub(r"[^\d]", "", text)
@@ -197,62 +356,37 @@ class MercadoLibreScraper:
 
     def _parse_card(self, li_el, brand: str) -> Optional[dict]:
         try:
-            # --- Agency filter ---
             if config.ONLY_PRIVATE_SELLERS and self._is_agency(li_el):
                 return None
-
-            # --- Financing/anticipo filter ---
             card_text_lower = li_el.get_text(" ", strip=True).lower()
             if any(kw in card_text_lower for kw in self._FINANCING_KEYWORDS):
                 return None
-
-            # Title
-            title_el = li_el.select_one(
-                ".poly-component__title, .ui-search-item__title, h2"
-            )
+            title_el = li_el.select_one(".poly-component__title, .ui-search-item__title, h2")
             title = title_el.get_text(strip=True) if title_el else ""
-
-            # Price + currency
             price_container = li_el.select_one(".poly-component__price, .ui-search-price")
             price_el = li_el.select_one(".andes-money-amount__fraction, .price-tag-fraction")
             price_raw = price_el.get_text(strip=True) if price_el else ""
             price_value = self._parse_price(price_raw)
             currency = self._detect_currency(price_container or li_el)
-
             price_ars = price_value if currency == "ARS" else None
             price_usd = price_value if currency == "USD" else None
-
-            # --- Price sanity filter ---
             if currency == "ARS":
-                if price_ars is None:
-                    return None
-                if price_ars < config.MIN_PRICE_ARS or price_ars > config.MAX_PRICE_ARS:
+                if price_ars is None or price_ars < config.MIN_PRICE_ARS or price_ars > config.MAX_PRICE_ARS:
                     return None
             elif currency == "USD":
-                if price_usd is None:
+                if price_usd is None or price_usd < config.MIN_PRICE_USD or price_usd > config.MAX_PRICE_USD:
                     return None
-                if price_usd < config.MIN_PRICE_USD or price_usd > config.MAX_PRICE_USD:
-                    return None
-
-            # Link & item ID
             link_el = li_el.select_one("a[href*='mercadolibre']")
             href = link_el["href"] if link_el else ""
             item_id = self._extract_item_id(href)
             if not item_id:
                 return None
-
-            # Thumbnail
             img_el = li_el.select_one("img")
             thumbnail = ""
             if img_el:
                 thumbnail = img_el.get("data-src") or img_el.get("src") or ""
-
-            # Attributes list: year + km
-            attr_items = li_el.select(
-                ".poly-attributes_list__item, .poly-component__attributes-list li"
-            )
+            attr_items = li_el.select(".poly-attributes_list__item, .poly-component__attributes-list li")
             attr_texts = [el.get_text(strip=True) for el in attr_items]
-
             year = None
             km = None
             for txt in attr_texts:
@@ -265,35 +399,24 @@ class MercadoLibreScraper:
                         pass
                 elif "km" in txt.lower():
                     km = self._parse_km(txt)
-
-            # Year / km filters
             if year and year < self.min_year:
                 return None
             if km is not None and km > self.max_km:
                 return None
             if km is not None and km < config.MIN_KM:
                 return None
-
-            # Year-based minimum price (anticipo/plan de ahorro trap)
-            if currency == "ARS" and price_ars is not None and year:
+            if currency == "ARS" and price_ars and year:
                 if price_ars < config.min_price_for_year(year):
                     return None
-
-            # Location
-            loc_el = li_el.select_one(
-                ".poly-component__location, [class*=location], [class*=city]"
-            )
+            loc_el = li_el.select_one(".poly-component__location, [class*=location], [class*=city]")
             location_text = loc_el.get_text(strip=True) if loc_el else ""
             city = location_text.split(" - ")[0].strip() if location_text else ""
-
-            # Model from title (strip brand prefix, then normalize to base model)
             model = title
             brand_lower = brand.lower()
             if model.lower().startswith(brand_lower):
                 model = model[len(brand_lower):].strip()
             from scorer import _normalize_model as _nm
             model = _nm(model).title() if model else model
-
             return {
                 "id": f"meli:{item_id}",
                 "source": "mercadolibre",
@@ -310,24 +433,14 @@ class MercadoLibreScraper:
                 "url": href.split("#")[0],
                 "thumbnail": thumbnail,
                 "seller_city": city,
-                "raw_data": {
-                    "title": title,
-                    "price_ars": price_ars,
-                    "price_usd": price_usd,
-                    "currency": currency,
-                    "year": year,
-                    "km": km,
-                    "location": location_text,
-                    "url": href,
-                },
+                "raw_data": {"title": title, "price_ars": price_ars, "price_usd": price_usd,
+                             "currency": currency, "year": year, "km": km, "location": location_text, "url": href},
             }
         except Exception as e:
             logger.debug(f"Error parsing ML card: {e}")
             return None
 
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, url: str, retries: int = 3
-    ) -> Optional[str]:
+    async def _fetch_page(self, client: httpx.AsyncClient, url: str, retries: int = 3) -> Optional[str]:
         delay = 2.0
         for attempt in range(retries):
             try:
@@ -351,85 +464,53 @@ class MercadoLibreScraper:
                     await asyncio.sleep(delay * (2 ** attempt))
         return None
 
-    async def fetch_listings(self) -> list:
+    async def _fetch_html_listings(self, client: httpx.AsyncClient) -> list:
+        """HTML scraping fallback — used when API credentials are not set."""
         listings = []
-        seen_ids = set()
+        seen_ids: set = set()
 
-        cookies = _load_cookies()
-        if cookies:
-            logger.info("ML scraper: using session cookies (%d cookies loaded)", len(cookies))
-        else:
-            logger.warning("ML scraper: no session cookies found, requests may be blocked")
+        for brand in self.brands:
+            brand_count = 0
+            for page in range(PAGES_PER_BRAND):
+                offset = page * 48
+                url = self._page_url(brand, offset)
+                html = await self._fetch_page(client, url)
+                if not html:
+                    break
+                soup = BeautifulSoup(html, "lxml")
+                cards = soup.select("li.ui-search-layout__item")
+                if not cards:
+                    break
+                for card in cards:
+                    listing = self._parse_card(card, brand)
+                    if listing and listing["id"] not in seen_ids:
+                        seen_ids.add(listing["id"])
+                        listings.append(listing)
+                        brand_count += 1
+                await asyncio.sleep(2.5)
+            logger.info(f"ML HTML {brand}: {brand_count} listings")
 
-        async with httpx.AsyncClient(
-            headers=ML_HEADERS, cookies=cookies, follow_redirects=True
-        ) as client:
-            for brand in self.brands:
-                brand_count = 0
-                for page in range(PAGES_PER_BRAND):
-                    offset = page * 48
-                    url = self._page_url(brand, offset)
-                    logger.info(f"ML scraping {brand} page {page + 1}: {url}")
-
+            for city_slug in REGIONAL_CITY_SLUGS:
+                for rpage in range(REGIONAL_PAGES):
+                    url = self._regional_url(brand, city_slug, rpage)
                     html = await self._fetch_page(client, url)
                     if not html:
-                        logger.warning(f"ML: no HTML for {brand} page {page + 1}")
                         break
-
                     soup = BeautifulSoup(html, "lxml")
                     cards = soup.select("li.ui-search-layout__item")
                     if not cards:
-                        logger.info(f"ML: no cards for {brand} page {page + 1}, stopping")
                         break
-
                     for card in cards:
                         listing = self._parse_card(card, brand)
                         if listing and listing["id"] not in seen_ids:
                             seen_ids.add(listing["id"])
                             listings.append(listing)
-                            brand_count += 1
+                    await asyncio.sleep(2.0)
 
-                    await asyncio.sleep(2.5)  # polite delay between pages
-
-                logger.info(f"ML {brand}: {brand_count} listings")
-
-                # Regional pass (inside brand loop) — city-specific pages for each brand
-                for city_slug in REGIONAL_CITY_SLUGS:
-                    city_count = 0
-                    for rpage in range(REGIONAL_PAGES):
-                        url = self._regional_url(brand, city_slug, rpage)
-                        logger.info(f"ML regional {brand}/{city_slug} p{rpage+1}: {url}")
-                        html = await self._fetch_page(client, url)
-                        if not html:
-                            break
-                        soup = BeautifulSoup(html, "lxml")
-                        cards = soup.select("li.ui-search-layout__item")
-                        if not cards:
-                            break
-                        for card in cards:
-                            listing = self._parse_card(card, brand)
-                            if listing and listing["id"] not in seen_ids:
-                                seen_ids.add(listing["id"])
-                                listings.append(listing)
-                                city_count += 1
-                        await asyncio.sleep(2.0)
-                    if city_count:
-                        logger.info(f"ML regional {brand}/{city_slug}: +{city_count} new listings")
-
-        # --- Full-category sweep (all brands, private sellers only) ---
-        # Catches any brand not in self.brands (Citroën, Nissan, Jeep, Kia, etc.)
-        # Uses "unknown" as brand — _parse_card extracts brand from title.
-        CATEGORY_PAGES = 12
-        cat_count = 0
+        # Category sweep
         for page in range(CATEGORY_PAGES):
             offset = page * 48
-            url = self._page_url("", offset)   # empty brand → category root
-            # Override: category URL has no brand slug
-            if offset == 0:
-                url = f"{self.BASE_URL}/_VendedorTipo_U_"
-            else:
-                url = f"{self.BASE_URL}/_VendedorTipo_U__Desde_{offset + 1}"
-            logger.info(f"ML category sweep page {page + 1}: {url}")
+            url = f"{self.BASE_URL}/_VendedorTipo_U_" if offset == 0 else f"{self.BASE_URL}/_VendedorTipo_U__Desde_{offset + 1}"
             html = await self._fetch_page(client, url)
             if not html:
                 break
@@ -438,17 +519,39 @@ class MercadoLibreScraper:
             if not cards:
                 break
             for card in cards:
-                # Extract brand from title (first word before space)
                 title_el = card.select_one(".poly-component__title, .ui-search-item__title, h2")
                 brand_guess = title_el.get_text(strip=True).split()[0] if title_el else "unknown"
                 listing = self._parse_card(card, brand_guess)
                 if listing and listing["id"] not in seen_ids:
                     seen_ids.add(listing["id"])
                     listings.append(listing)
-                    cat_count += 1
             await asyncio.sleep(2.5)
-        if cat_count:
-            logger.info(f"ML category sweep: +{cat_count} additional listings")
 
-        logger.info(f"MercadoLibre total: {len(listings)} listings")
+        logger.info(f"ML HTML total: {len(listings)} listings")
         return listings
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    async def fetch_listings(self) -> list:
+        from ml_auth import get_auth_headers
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            auth_headers = await get_auth_headers(client)
+
+            if auth_headers:
+                logger.info("ML scraper: using API with OAuth2 (no cookies needed)")
+                return await self._fetch_api_listings(client, auth_headers)
+            else:
+                logger.warning("ML scraper: no API credentials — falling back to HTML scraping with cookies")
+                cookies = _load_cookies()
+                if cookies:
+                    logger.info(f"ML scraper: using session cookies ({len(cookies)} loaded)")
+                else:
+                    logger.warning("ML scraper: no cookies either — requests may be blocked")
+                html_client = httpx.AsyncClient(
+                    headers=ML_HEADERS, cookies=cookies, follow_redirects=True
+                )
+                async with html_client:
+                    return await self._fetch_html_listings(html_client)
