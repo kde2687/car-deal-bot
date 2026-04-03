@@ -174,6 +174,8 @@ class TelegramAlerter:
                 + f" · Score: {escape_markdown_v2(str(int(d.score)))}\n"
             )
 
+        import config as _cfg
+        lines.append(f"\n[Ver dashboard]({_cfg.DASHBOARD_URL})")
         text = "\n".join(lines)
         try:
             await self.app.bot.send_message(

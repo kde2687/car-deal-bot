@@ -201,10 +201,11 @@ def calculate_market_reference(
     session, brand: str, model: str, year: int,
     listing_km: Optional[int] = None, exclude_id: Optional[str] = None,
     listing_price_usd: Optional[float] = None,
-) -> tuple[Optional[float], Optional[float], int, str, Optional[int]]:
+) -> tuple[Optional[float], Optional[float], int, str, Optional[int], int]:
     """
-    Return (median_usd, median_ars_current, sample_count, ref_type, percentile_rank).
+    Return (median_usd, median_ars_current, sample_count, ref_type, percentile_rank, confidence_index).
     percentile_rank: 0–100, lower = cheaper relative to comparables. None when cold.
+    confidence_index: 0–100, quality of the benchmark estimate.
     Uses 12-month history in USD with exponential decay weighting (half-life configurable).
     ref_type: 'exact' | 'exact_nokm' | 'broad' | 'curve' | 'brand_fallback' | 'ml_model' | 'cold'
     """

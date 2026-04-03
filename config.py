@@ -93,3 +93,6 @@ ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "")
 SMTP_USER      = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD  = os.getenv("SMTP_PASSWORD", "")
 DIGEST_RECIPIENT = os.getenv("DIGEST_RECIPIENT", "")
+
+# Dashboard public URL (used in email digests and Telegram alerts)
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://cardeal.ar")

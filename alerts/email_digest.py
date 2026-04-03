@@ -23,7 +23,7 @@ def _format_price(price_ars, price_usd):
     return "N/A"
 
 
-def _build_html(deals: list) -> str:
+def _build_html(deals: list, dashboard_url: str = "https://cardeal.ar") -> str:
     date_str = datetime.now().strftime("%d/%m/%Y")
     rows = ""
     for i, d in enumerate(deals, 1):
@@ -74,7 +74,7 @@ def _build_html(deals: list) -> str:
         <tbody>{rows}</tbody>
       </table>
       <div style="background:#f8f9fa;padding:12px 16px;border:1px solid #eee;border-top:none;border-radius:0 0 8px 8px;font-size:12px;color:#888;">
-        Ver todos los deals: <a href="https://tactfully-untwirling-roderick.ngrok-free.dev" style="color:#1a73e8;">CarDeal AR Dashboard</a>
+        Ver todos los deals: <a href="{dashboard_url}" style="color:#1a73e8;">CarDeal AR Dashboard</a>
       </div>
     </body>
     </html>
@@ -107,7 +107,8 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
         logger.info("Email digest: no deals found, skipping")
         return False
 
-    html = _build_html(deals)
+    import config as cfg
+    html = _build_html(deals, dashboard_url=cfg.DASHBOARD_URL)
     date_str = datetime.now().strftime("%d/%m/%Y")
 
     msg = MIMEMultipart("alternative")

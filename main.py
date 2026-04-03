@@ -300,7 +300,7 @@ async def main():
             id="telegram_digest_8am",
         )
         scheduler.start()
-        logger.info(f"Scheduler started: scan every {cfg.SCAN_INTERVAL_MINUTES} min, market refresh every 6h")
+        logger.info("Scheduler started: scans at 6am/12pm/6pm/00hs ARG, market refresh every 6h")
     except Exception as e:
         logger.error(f"Scheduler failed to start: {e}")
         scheduler = None
