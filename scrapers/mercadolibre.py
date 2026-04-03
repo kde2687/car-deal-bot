@@ -26,21 +26,34 @@ _COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ml_coo
 
 
 def _load_cookies() -> dict:
-    """Load ML session cookies from ml_cookies.json if it exists."""
+    """Load ML session cookies from env var ML_COOKIES_JSON or ml_cookies.json file."""
+    raw = None
+    # 1. Try environment variable first (works on Railway / cloud deployments)
+    env_json = os.environ.get("ML_COOKIES_JSON", "")
+    if env_json:
+        try:
+            raw = json.loads(env_json)
+        except Exception:
+            pass
+    # 2. Fall back to local file
+    if raw is None:
+        try:
+            with open(_COOKIES_FILE) as f:
+                raw = json.load(f)
+        except Exception:
+            return {}
     try:
-        with open(_COOKIES_FILE) as f:
-            raw = json.load(f)
         return {c["name"]: c["value"] for c in raw if "mercadolibre.com.ar" in c.get("domain", "")}
     except Exception:
         return {}
 
-# Pages per brand (48 items/page). 8 pages = ~384 listings per brand → richer comparables DB.
+# Pages per brand (48 items/page). 12 pages = ~576 listings per brand → richer comparables DB.
 PAGES_PER_BRAND = 12
 
 # Regional city slugs for ML — scrape these in addition to the national search.
-# Format: ML city slugs as they appear in autos.mercadolibre.com.ar/{brand}/{city_slug}
-# Add the city that is nearest to the user to ensure local listings are captured.
+# Covers cities near Darregueira + major population centers for comparables.
 REGIONAL_CITY_SLUGS: list[str] = [
+    # Near Darregueira (<250km)
     "bahia-blanca",      # ~130km
     "punta-alta",        # ~150km
     "coronel-suarez",    # ~95km
@@ -52,9 +65,29 @@ REGIONAL_CITY_SLUGS: list[str] = [
     "azul",              # ~195km
     "pehuajo",           # ~229km
     "bolivar",           # ~175km
-    "pigüé",             # ~90km
+    "pigüe",             # ~90km
+    "carhue",            # ~80km
+    "guamini",           # ~60km
+    "salliqueloo",       # ~115km
+    "trenque-lauquen",   # ~160km
+    "nueve-de-julio",    # ~200km
+    "lincoln",           # ~210km
+    # Major cities (for comparables — more listings = better market reference)
+    "mar-del-plata",     # ~330km
+    "la-plata",          # ~480km
+    "rosario",           # ~500km
+    "cordoba",           # ~600km
+    "mendoza",           # ~830km
+    "neuquen",           # ~830km
+    "san-luis",          # ~620km
+    "rio-cuarto",        # ~490km
+    "san-nicolas-de-los-arroyos",  # ~520km
+    "junin",             # ~360km
+    "pergamino",         # ~430km
+    "venado-tuerto",     # ~430km
+    "villa-maria",       # ~450km
 ]
-REGIONAL_PAGES = 2   # pages per city-brand combo (2 × 48 = up to 96 per city)
+REGIONAL_PAGES = 3   # pages per city-brand combo (3 × 48 = up to 144 per city)
 
 
 class MercadoLibreScraper:
@@ -383,7 +416,7 @@ class MercadoLibreScraper:
         # --- Full-category sweep (all brands, private sellers only) ---
         # Catches any brand not in self.brands (Citroën, Nissan, Jeep, Kia, etc.)
         # Uses "unknown" as brand — _parse_card extracts brand from title.
-        CATEGORY_PAGES = 6
+        CATEGORY_PAGES = 12
         cat_count = 0
         for page in range(CATEGORY_PAGES):
             offset = page * 48

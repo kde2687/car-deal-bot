@@ -21,13 +21,14 @@ AC_HEADERS = {
     "Referer": "https://www.autocosmos.com.ar/",
 }
 
-PAGES_PER_BRAND = 8
+PAGES_PER_BRAND = 12
 
 # Regional province IDs for AC — scrape these after the national pass to capture
-# sellers in nearby provinces that fall outside the first PAGES_PER_BRAND pages.
-# pr=301 = Buenos Aires province (non-AMBA), pr=310 = La Pampa
-REGIONAL_PROVINCE_IDS: list[int] = [301, 310]
-REGIONAL_PROVINCE_PAGES = 4   # 4 × 48 = up to 192 listings per brand per province
+# sellers in nearby provinces.
+# 301=Buenos Aires interior, 303=Córdoba, 306=Entre Ríos, 310=La Pampa,
+# 318=San Luis, 319=Santa Fe
+REGIONAL_PROVINCE_IDS: list[int] = [301, 303, 306, 310, 318, 319]
+REGIONAL_PROVINCE_PAGES = 5   # 5 × 48 = up to 240 listings per brand per province
 
 
 class AutocosmosScraper:

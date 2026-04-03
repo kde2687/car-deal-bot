@@ -161,7 +161,7 @@ class KavakScraper:
             )
             page = await context.new_page()
 
-            for page_num in range(1, 12):
+            for page_num in range(1, 26):
                 url = f"{self.BASE_URL}?page={page_num}"
                 logger.info(f"Kavak (Playwright) page {page_num}: {url}")
                 try:
