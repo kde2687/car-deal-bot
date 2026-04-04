@@ -367,24 +367,41 @@ class MercadoLibreScraper:
         "agencia", "dealer",
         "usados certificados",
         "vehículo validado", "vehiculo validado",
-        "tienda oficial",
-        "s.a.", "s.r.l.", "s.r.l", " srl ",
+        "tienda oficial", "tienda",
+        "s.a.", "s.r.l.", "s.r.l", " srl ", "s.a.s",
         "multimarca", "cochería", "cocheria",
         "plan de ahorro",
+        "grupo ", "group ", "motors ", "autos ",
+        "certificado", "garantía de fábrica", "garantia de fabrica",
+        "ver más de este vendedor", "ver mas de este vendedor",
+        "ver vehículos", "ver vehiculos",
     )
 
     def _is_agency(self, li_el) -> bool:
-        seller_el = li_el.select_one(".poly-component__seller, [class*=seller-info]")
+        # Any dedicated seller element = dealer (private sellers don't have this)
+        seller_el = li_el.select_one(
+            ".poly-component__seller, [class*=seller-info], [class*=seller__], "
+            "[class*=seller-name], [data-testid*=seller]"
+        )
         if seller_el and seller_el.get_text(strip=True):
             return True
+        # Official store SVG icon
         for svg in li_el.find_all("svg"):
             if "oficial" in (svg.get("aria-label") or "").lower():
                 return True
+        # Full-text keyword scan
         card_text = li_el.get_text(" ", strip=True).lower()
         if any(kw in card_text for kw in self._AGENCY_KEYWORDS):
             return True
+        # Any badge/tag/pill mentioning "validado", "garantia", "oficial", "certificado"
         for badge in li_el.select("[class*=badge],[class*=pill],[class*=label],[class*=tag]"):
-            if "validado" in badge.get_text(strip=True).lower():
+            t = badge.get_text(strip=True).lower()
+            if any(w in t for w in ("validado", "garantia", "garantía", "oficial", "certificado")):
+                return True
+        # "Ver más vehículos de" link = seller with multiple listings = dealer
+        for a in li_el.find_all("a", href=True):
+            txt = a.get_text(strip=True).lower()
+            if "más vehículos" in txt or "mas vehiculos" in txt or "más autos" in txt:
                 return True
         return False
 
