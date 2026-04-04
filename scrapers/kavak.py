@@ -1,10 +1,27 @@
 import asyncio
+import base64
+import json
 import logging
 import re
 from typing import Optional
 
 import httpx
 import config
+
+_KAVAK_IMG_BASE = "https://images.prd.kavak.io"
+
+
+def _kavak_img_url(image_path: str) -> str:
+    """Convert a Kavak image path to a full CDN URL."""
+    if not image_path:
+        return ""
+    params = {
+        "bucket": "kavak-images",
+        "key": image_path,
+        "edits": {"resize": {"width": 400, "height": 280, "fit": "cover"}},
+    }
+    encoded = base64.b64encode(json.dumps(params, separators=(",", ":")).encode()).decode()
+    return f"{_KAVAK_IMG_BASE}/{encoded}"
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +31,8 @@ _CAR_PATTERN = re.compile(
     r'[^}]*?"footerInfo":"([^"]+)"[^}]*?"car_id":"([^"]+)"'
     r'(?:[^}]*?"car_year":"([^"]*)")?'
 )
+# Separate pattern to capture image path from the car object (appears before title)
+_IMG_PATTERN = re.compile(r'"id":"(\d+)"[^}]*?"url":"[^"]*"[^}]*?"image":"([^"]*)"')
 
 
 class KavakScraper:
@@ -28,6 +47,8 @@ class KavakScraper:
         """Extract car dicts from a Kavak RSC script chunk."""
         # Chunk uses \\" for actual quote chars — unescape once
         unescaped = chunk.replace('\\"', '"')
+        # Build id→image_path lookup from image pattern
+        img_map = {m.group(1): m.group(2) for m in _IMG_PATTERN.finditer(unescaped)}
         cars = []
         for m in _CAR_PATTERN.finditer(unescaped):
             title_raw   = m.group(1)   # "Toyota • Corolla"
@@ -95,6 +116,7 @@ class KavakScraper:
                 "transmission": transmission,
                 "title": title_raw.replace("•", "").strip(),
                 "subtitle": subtitle,
+                "image_path": img_map.get(car_id, ""),
             })
         return cars
 
@@ -134,7 +156,7 @@ class KavakScraper:
                 "transmission": car.get("transmission", ""),
                 "condition": "used",
                 "url": url,
-                "thumbnail": "",
+                "thumbnail": _kavak_img_url(car.get("image_path", "")),
                 "seller_city": city,
                 "raw_data": car,
             }
