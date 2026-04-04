@@ -62,20 +62,19 @@ def _load_cookies() -> dict:
 
 
 # HTML scraper constants (fallback when no API credentials)
-PAGES_PER_BRAND = 12
+PAGES_PER_BRAND = 5          # 5 pages × 48 cards = 240 listings max per brand
+HTML_CONCURRENCY = 4         # concurrent brand fetches
+HTML_PAGE_DELAY  = 1.2       # seconds between pages within one brand
 REGIONAL_CITY_SLUGS: list[str] = [
     # Near Darregueira (<250km)
-    "bahia-blanca", "punta-alta", "coronel-suarez", "santa-rosa",
-    "tres-arroyos", "general-pico", "tandil", "olavarria", "azul",
-    "pehuajo", "bolivar", "pigüe", "carhue", "guamini",
-    "salliqueloo", "trenque-lauquen", "nueve-de-julio", "lincoln",
+    "bahia-blanca", "santa-rosa", "tandil", "olavarria",
+    "trenque-lauquen", "nueve-de-julio",
     # Major cities (for comparables)
-    "mar-del-plata", "la-plata", "rosario", "cordoba", "mendoza",
-    "neuquen", "san-luis", "rio-cuarto", "san-nicolas-de-los-arroyos",
-    "junin", "pergamino", "venado-tuerto", "villa-maria",
+    "mar-del-plata", "la-plata", "rosario", "cordoba",
+    "mendoza", "neuquen",
 ]
-REGIONAL_PAGES = 3
-CATEGORY_PAGES = 12
+REGIONAL_PAGES = 1
+CATEGORY_PAGES = 6
 
 
 class MercadoLibreScraper:
@@ -522,12 +521,14 @@ class MercadoLibreScraper:
         return None
 
     async def _fetch_html_listings(self, client: httpx.AsyncClient) -> list:
-        """HTML scraping fallback — used when API credentials are not set."""
-        listings = []
+        """HTML scraping fallback — parallel brand fetching with concurrency limit."""
+        listings: list = []
         seen_ids: set = set()
+        lock = asyncio.Lock()
+        sem = asyncio.Semaphore(HTML_CONCURRENCY)
 
-        for brand in self.brands:
-            brand_count = 0
+        async def _scrape_brand(brand: str):
+            brand_listings = []
             for page in range(PAGES_PER_BRAND):
                 offset = page * 48
                 url = self._page_url(brand, offset)
@@ -540,12 +541,9 @@ class MercadoLibreScraper:
                     break
                 for card in cards:
                     listing = self._parse_card(card, brand)
-                    if listing and listing["id"] not in seen_ids:
-                        seen_ids.add(listing["id"])
-                        listings.append(listing)
-                        brand_count += 1
-                await asyncio.sleep(2.5)
-            logger.info(f"ML HTML {brand}: {brand_count} listings")
+                    if listing:
+                        brand_listings.append(listing)
+                await asyncio.sleep(HTML_PAGE_DELAY)
 
             for city_slug in REGIONAL_CITY_SLUGS:
                 for rpage in range(REGIONAL_PAGES):
@@ -559,10 +557,24 @@ class MercadoLibreScraper:
                         break
                     for card in cards:
                         listing = self._parse_card(card, brand)
-                        if listing and listing["id"] not in seen_ids:
-                            seen_ids.add(listing["id"])
-                            listings.append(listing)
-                    await asyncio.sleep(2.0)
+                        if listing:
+                            brand_listings.append(listing)
+                    await asyncio.sleep(HTML_PAGE_DELAY)
+
+            async with lock:
+                added = 0
+                for lst in brand_listings:
+                    if lst["id"] not in seen_ids:
+                        seen_ids.add(lst["id"])
+                        listings.append(lst)
+                        added += 1
+            logger.info(f"ML HTML {brand}: {added} new listings")
+
+        async def _scrape_brand_throttled(brand: str):
+            async with sem:
+                await _scrape_brand(brand)
+
+        await asyncio.gather(*[_scrape_brand_throttled(b) for b in self.brands])
 
         # Category sweep
         for page in range(CATEGORY_PAGES):
@@ -582,7 +594,7 @@ class MercadoLibreScraper:
                 if listing and listing["id"] not in seen_ids:
                     seen_ids.add(listing["id"])
                     listings.append(listing)
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(HTML_PAGE_DELAY)
 
         logger.info(f"ML HTML total: {len(listings)} listings")
         return listings
@@ -622,13 +634,15 @@ class MercadoLibreScraper:
                     f"ML scraper: NO API credentials (ML_APP_ID set={bool(config.ML_APP_ID)}) "
                     f"— falling back to HTML scraping"
                 )
-                cookies = _load_cookies()
-                if cookies:
-                    logger.info(f"ML scraper: using session cookies ({len(cookies)} loaded)")
-                else:
-                    logger.warning("ML scraper: no cookies either — requests may be blocked")
-                html_client = httpx.AsyncClient(
-                    headers=ML_HEADERS, cookies=cookies, follow_redirects=True, proxy=proxy
-                )
-                async with html_client:
-                    return await self._fetch_html_listings(html_client)
+
+        # HTML fallback — runs whether API had credentials or not
+        cookies = _load_cookies()
+        if cookies:
+            logger.info(f"ML scraper: using session cookies ({len(cookies)} loaded)")
+        else:
+            logger.info("ML scraper: HTML fallback (no cookies)")
+        html_client = httpx.AsyncClient(
+            headers=ML_HEADERS, cookies=cookies, follow_redirects=True, proxy=proxy
+        )
+        async with html_client:
+            return await self._fetch_html_listings(html_client)
