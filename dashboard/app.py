@@ -251,6 +251,27 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    @app.route("/admin/ml_token_refresh", methods=["POST"])
+    def ml_token_refresh():
+        """Force ML OAuth token refresh to pick up new app permissions."""
+        import asyncio, httpx
+        from ml_auth import _manager
+        result = {}
+        async def _run():
+            _manager._token = None
+            _manager._expires_at = 0.0
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                from ml_auth import get_auth_headers
+                headers = await get_auth_headers(client)
+                result["new_token_obtained"] = bool(headers)
+        try:
+            asyncio.run(_run())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_run())
+            loop.close()
+        return jsonify(result)
+
     @app.route("/admin/ml_debug")
     def ml_debug():
         """Diagnose ML scraper: test auth, run one sample query, show config."""
