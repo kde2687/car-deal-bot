@@ -594,9 +594,15 @@ class MercadoLibreScraper:
     async def fetch_listings(self) -> list:
         from ml_auth import get_auth_headers
 
-        proxy = config.ML_PROXY_URL or None
-        if proxy:
+        import random
+        if config.ML_PROXY_URLS:
+            proxy = random.choice(config.ML_PROXY_URLS)
+            logger.info(f"ML scraper: using proxy (pool of {len(config.ML_PROXY_URLS)})")
+        elif config.ML_PROXY_URL:
+            proxy = config.ML_PROXY_URL
             logger.info("ML scraper: using outbound proxy")
+        else:
+            proxy = None
         client_kwargs = dict(follow_redirects=True, proxy=proxy)
 
         async with httpx.AsyncClient(**client_kwargs) as client:
