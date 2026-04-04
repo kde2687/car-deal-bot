@@ -149,7 +149,9 @@ class MercadoLibreScraper:
                     model_attr = val
 
             # Filters
-            if year and year < self.min_year:
+            if not year:
+                return None  # No year in API response — can't score reliably
+            if year < self.min_year:
                 return None
             if km is not None and km > self.max_km:
                 return None

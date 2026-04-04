@@ -234,7 +234,7 @@ def calculate_market_reference(
                 Listing.km, Listing.first_seen, Listing.model  # model included — no N+1
             )
             .filter(
-                Listing.brand.ilike(f"%{brand}%"),
+                Listing.brand.ilike(brand),
                 (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
                 Listing.first_seen >= cutoff,
                 # Include agency listings: dealers set market prices and are real data points.
@@ -349,7 +349,7 @@ def _depreciation_curve_estimate(
         Listing.id, Listing.price_ars, Listing.price_usd_equiv,
         Listing.year, Listing.first_seen, Listing.model  # model included — no N+1
     ).filter(
-        Listing.brand.ilike(f"%{brand}%"),
+        Listing.brand.ilike(brand),
         (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
         Listing.year.isnot(None),
         Listing.first_seen >= cutoff,
@@ -402,7 +402,7 @@ def _brand_age_fallback(
     q = session.query(
         Listing.id, Listing.price_ars, Listing.price_usd_equiv, Listing.first_seen
     ).filter(
-        Listing.brand.ilike(f"%{brand}%"),
+        Listing.brand.ilike(brand),
         (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
         Listing.year.between(min_year, max_year),
         Listing.first_seen >= cutoff,
