@@ -594,7 +594,12 @@ class MercadoLibreScraper:
     async def fetch_listings(self) -> list:
         from ml_auth import get_auth_headers
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        proxy = config.ML_PROXY_URL or None
+        if proxy:
+            logger.info("ML scraper: using outbound proxy")
+        client_kwargs = dict(follow_redirects=True, proxy=proxy)
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             auth_headers = await get_auth_headers(client)
 
             if auth_headers:
@@ -617,7 +622,7 @@ class MercadoLibreScraper:
                 else:
                     logger.warning("ML scraper: no cookies either — requests may be blocked")
                 html_client = httpx.AsyncClient(
-                    headers=ML_HEADERS, cookies=cookies, follow_redirects=True
+                    headers=ML_HEADERS, cookies=cookies, follow_redirects=True, proxy=proxy
                 )
                 async with html_client:
                     return await self._fetch_html_listings(html_client)

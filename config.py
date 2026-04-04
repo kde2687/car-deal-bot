@@ -90,6 +90,10 @@ MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "40000")) # ±40k km
 ML_APP_ID = os.getenv("ML_APP_ID", "")
 ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "")
 
+# Outbound proxy for ML requests (residential IP to bypass datacenter IP blocks)
+# Format: http://user:password@host:port  e.g. http://user:pass@proxy.webshare.io:80
+ML_PROXY_URL = os.getenv("ML_PROXY_URL", "")
+
 # Email digest
 SMTP_USER      = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD  = os.getenv("SMTP_PASSWORD", "")

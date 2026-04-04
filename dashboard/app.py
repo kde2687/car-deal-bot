@@ -379,10 +379,15 @@ def create_app() -> Flask:
         err = _check_admin()
         if err: return err
         import asyncio, httpx, config as cfg
-        result = {"ml_app_id_set": bool(cfg.ML_APP_ID), "ml_secret_set": bool(cfg.ML_CLIENT_SECRET)}
+        result = {
+            "ml_app_id_set": bool(cfg.ML_APP_ID),
+            "ml_secret_set": bool(cfg.ML_CLIENT_SECRET),
+            "proxy_set": bool(cfg.ML_PROXY_URL),
+        }
 
         async def _run():
-            async with httpx.AsyncClient(follow_redirects=True) as client:
+            proxy = cfg.ML_PROXY_URL or None
+            async with httpx.AsyncClient(follow_redirects=True, proxy=proxy) as client:
                 from ml_auth import get_auth_headers
                 headers = await get_auth_headers(client)
                 result["auth_ok"] = bool(headers)
