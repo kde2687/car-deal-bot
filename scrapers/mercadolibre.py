@@ -207,14 +207,14 @@ class MercadoLibreScraper:
             logger.debug(f"ML API result parse error: {e}")
             return None
 
-    async def _fetch_api_listings(self, client: httpx.AsyncClient, auth_headers: dict) -> list | None:
+    async def _fetch_api_listings(self, client: httpx.AsyncClient, auth_headers: dict) -> Optional[list]:
         """Fetch listings using the ML Search API.
         Returns None if the API is inaccessible (403/401) so caller can fall back to HTML.
         """
         from ml_auth import get_auth_headers
         listings = []
         seen_ids: set = set()
-        _api_accessible: bool | None = None  # None = not yet tested
+        _api_accessible: Optional[bool] = None  # None = not yet tested
 
         # Split into year windows to beat the 1000-result API cap.
         # Without this, sort=date_desc fills the cap with all years and
