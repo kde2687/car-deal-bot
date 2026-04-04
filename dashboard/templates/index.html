@@ -546,14 +546,32 @@
       btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Escaneando...';
       fetch('/admin/scan', { method: 'POST' })
         .then(r => r.json())
-        .then(() => {
-          btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Listo! Recargando...';
-          setTimeout(() => location.reload(), 7 * 60 * 1000);
+        .then(data => {
+          if (data.status === 'already running') {
+            pollScanStatus(); // already running, just poll
+          } else {
+            pollScanStatus();
+          }
         })
         .catch(() => {
           btn.disabled = false;
           btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Actualizar ahora';
         });
+    }
+
+    function pollScanStatus() {
+      const btn = document.getElementById('scanBtn');
+      fetch('/admin/scan_status')
+        .then(r => r.json())
+        .then(data => {
+          if (data.running) {
+            setTimeout(pollScanStatus, 10000); // check again in 10s
+          } else {
+            btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Listo! Recargando...';
+            setTimeout(() => location.reload(), 1500);
+          }
+        })
+        .catch(() => setTimeout(pollScanStatus, 15000));
     }
 
     function hideCard(listingId, btn) {

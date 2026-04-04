@@ -476,6 +476,10 @@ def create_app() -> Flask:
         t.start()
         return jsonify({"status": "scan started"})
 
+    @app.route("/admin/scan_status")
+    def scan_status():
+        return jsonify({"running": _scan_running})
+
     @app.route("/unhide/<path:listing_id>", methods=["POST"])
     def unhide_listing(listing_id):
         session = SessionLocal()
