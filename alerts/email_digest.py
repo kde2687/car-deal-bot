@@ -111,17 +111,19 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
     html = _build_html(deals, dashboard_url=cfg.DASHBOARD_URL)
     date_str = datetime.now().strftime("%d/%m/%Y")
 
+    recipients = [r.strip() for r in recipient.split(",") if r.strip()]
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"🚗 CarDeal AR — Top 10 Deals del {date_str}"
     msg["From"] = smtp_user
-    msg["To"] = recipient
+    msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html, "html", "utf-8"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
             server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_user, recipient, msg.as_string())
-        logger.info(f"Email digest sent to {recipient} with {len(deals)} deals")
+            server.sendmail(smtp_user, recipients, msg.as_string())
+        logger.info(f"Email digest sent to {recipients} with {len(deals)} deals")
         return True
     except Exception as e:
         logger.error(f"Email digest send failed: {e}")
