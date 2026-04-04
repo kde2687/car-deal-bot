@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
-from database import SessionLocal, Listing, MarketReference
+from database import SessionLocal, Listing, MarketReference, SegmentVelocity
 from geo import coords_from_listing_dict, distance_from_darregueira, ORIGIN_NAME
 
 logger = logging.getLogger(__name__)
@@ -237,7 +237,8 @@ def calculate_market_reference(
                 Listing.brand.ilike(f"%{brand}%"),
                 (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
                 Listing.first_seen >= cutoff,
-                Listing.is_agency != True,
+                # Include agency listings: dealers set market prices and are real data points.
+                # is_agency listings are excluded from deal detection separately.
                 Listing.hidden != True,
                 # Include active + sold listings; sold = confirmed clearing price
                 Listing.status.in_(["active", "sold"]),
@@ -352,7 +353,6 @@ def _depreciation_curve_estimate(
         (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
         Listing.year.isnot(None),
         Listing.first_seen >= cutoff,
-        Listing.is_agency != True,
         Listing.hidden != True,
     ).all()
 
@@ -406,7 +406,6 @@ def _brand_age_fallback(
         (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
         Listing.year.between(min_year, max_year),
         Listing.first_seen >= cutoff,
-        Listing.is_agency != True,
         Listing.hidden != True,
     ).all()
 
@@ -512,6 +511,20 @@ def score_listing(session, listing_dict: dict) -> dict:
     else:
         age_mod = 0
 
+    # Motivated seller signal: listing age + price drops lower the required discount threshold.
+    # A seller who has dropped price 2+ times after 45 days is clearly motivated.
+    days_on_market   = listing_dict.get("days_on_market", 0) or 0
+    price_changes_ct = listing_dict.get("price_changes_count", 0) or 0
+    if days_on_market > 45 and price_changes_ct >= 2:
+        motivated_discount_reduction = 2.0
+        motivated_note = f" Vendedor motivado ({days_on_market}d en mercado, {price_changes_ct} bajas de precio)."
+    elif days_on_market > 21 and price_changes_ct >= 1:
+        motivated_discount_reduction = 1.0
+        motivated_note = f" Baja de precio reciente ({days_on_market}d en mercado)."
+    else:
+        motivated_discount_reduction = 0.0
+        motivated_note = ""
+
     ref_labels = {
         "exact":         f"{sample_count} muestras, km similar",
         "exact_nokm":    f"{sample_count} muestras",
@@ -537,6 +550,7 @@ def score_listing(session, listing_dict: dict) -> dict:
     # is_deal: based purely on discount_pct relative to reference quality.
     # score/confidence only affects ranking — not deal detection.
     # Tighter reference → lower discount required (we trust the benchmark more).
+    # Motivated seller signal lowers threshold by up to 2 pp.
     _deal_min_discount = {
         "exact":          4.0,    # same model, ±1yr, similar km — high trust
         "exact_nokm":     6.0,    # same model, ±1yr
@@ -545,8 +559,9 @@ def score_listing(session, listing_dict: dict) -> dict:
         "brand_fallback": 10.0,   # same brand, any model — low trust
         "ml_model":       8.0,
     }
+    effective_min_discount = _deal_min_discount.get(ref_type, 100.0) - motivated_discount_reduction
     is_deal = (
-        discount_pct >= _deal_min_discount.get(ref_type, 100.0)
+        discount_pct >= effective_min_discount
         and ref_type != "cold"
     )
 
@@ -558,7 +573,7 @@ def score_listing(session, listing_dict: dict) -> dict:
     deal_reason = (
         f"{year} {brand} {_normalize_model(model).title()} — "
         f"precio: {asking_label} vs mediana mercado: {market_label}{ref_note} "
-        f"({discount_str}). {km_str}. Score: {final_score:.0f}/100"
+        f"({discount_str}). {km_str}.{motivated_note} Score: {final_score:.0f}/100"
     )
 
     return {
@@ -597,6 +612,69 @@ def update_market_references(session) -> None:
     logger.info(f"Updated {updated} market references")
 
 
+def update_segment_velocity(session) -> int:
+    """
+    Compute avg/median days-to-sale per brand/model/year from confirmed sold listings.
+    Requires at least 2 sold samples per segment.
+    Returns count of segments updated.
+    """
+    from collections import defaultdict
+
+    sold = session.query(
+        Listing.brand, Listing.model, Listing.year,
+        Listing.first_seen, Listing.sold_at
+    ).filter(
+        Listing.status == "sold",
+        Listing.sold_at.isnot(None),
+        Listing.first_seen.isnot(None),
+        Listing.brand.isnot(None),
+        Listing.model.isnot(None),
+        Listing.year.isnot(None),
+    ).all()
+
+    groups: dict = defaultdict(list)
+    for brand, model, year, first_seen, sold_at in sold:
+        days = (sold_at - first_seen).days
+        if 0 <= days <= 365:
+            base_model = _normalize_model(model or "")
+            groups[(brand, base_model, year)].append(days)
+
+    updated = 0
+    for (brand, base_model, year), days_list in groups.items():
+        if len(days_list) < 2:
+            continue
+        avg = sum(days_list) / len(days_list)
+        med = statistics.median(days_list)
+        try:
+            ref = session.query(SegmentVelocity).filter_by(
+                brand=brand, model=base_model, year=year
+            ).first()
+            if ref:
+                ref.avg_days_to_sale   = avg
+                ref.median_days_to_sale = med
+                ref.sample_count       = len(days_list)
+                ref.updated_at         = datetime.utcnow()
+            else:
+                session.add(SegmentVelocity(
+                    brand=brand, model=base_model, year=year,
+                    avg_days_to_sale=avg, median_days_to_sale=med,
+                    sample_count=len(days_list), updated_at=datetime.utcnow(),
+                ))
+            updated += 1
+        except Exception as e:
+            logger.warning(f"SegmentVelocity update failed {brand} {base_model} {year}: {e}")
+            session.rollback()
+
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"update_segment_velocity commit failed: {e}")
+
+    logger.info(f"Segment velocity: {updated} segments updated from {len(sold)} sold listings")
+    return updated
+
+
 def rescore_all_active_listings(session) -> tuple[int, int]:
     """
     Re-score every active listing using the current comparables DB.
@@ -624,6 +702,8 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
                 "km": obj.km,
                 "price_ars": obj.price_ars,
                 "price_usd": obj.price_usd,
+                "days_on_market": (datetime.utcnow() - obj.first_seen).days if obj.first_seen else 0,
+                "price_changes_count": obj.price_changes_count or 0,
             }
             result = score_listing(session, listing_dict)
             old_ref = obj.ref_type
@@ -704,6 +784,11 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         existing.last_seen = now
                         session.commit()
                         continue
+
+                    # Enrich listing_dict with market signals from existing DB row
+                    listing_dict = dict(listing_dict)
+                    listing_dict["days_on_market"] = (now - existing.first_seen).days if existing.first_seen else 0
+                    listing_dict["price_changes_count"] = existing.price_changes_count or 0
 
                     # Detect price change — record in history
                     new_price_ars = listing_dict.get("price_ars")

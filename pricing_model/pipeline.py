@@ -26,7 +26,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-MODEL_VERSION = 2  # increment when features or schema change
+MODEL_VERSION = 3  # v3: added days_on_market + price_changes_count features
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +82,13 @@ class PricingPipeline:
             Listing.brand, Listing.model, Listing.year,
             Listing.km, Listing.seller_city,
             Listing.fuel, Listing.transmission,
-            Listing.price_ars, Listing.price_usd_equiv
+            Listing.price_ars, Listing.price_usd_equiv,
+            Listing.first_seen, Listing.price_changes_count,
         ).filter(
             Listing.price_ars > 0,
             Listing.year.isnot(None),
             Listing.km.isnot(None),
-            Listing.is_agency != True,
+            # Include agency listings — dealer prices are real market data
             Listing.hidden != True,
         ).all()
 
@@ -96,8 +97,9 @@ class PricingPipeline:
             return False
 
         current_year = datetime.utcnow().year
+        now = datetime.utcnow()
         records = []
-        for brand, model, year, km, city, fuel, transmission, price_ars, price_usd_equiv in rows:
+        for brand, model, year, km, city, fuel, transmission, price_ars, price_usd_equiv, first_seen, price_changes_count in rows:
             usd = price_usd_equiv if price_usd_equiv and price_usd_equiv > 0 \
                   else (price_ars / usd_rate if price_ars else None)
             if not usd or usd <= 0:
@@ -105,15 +107,18 @@ class PricingPipeline:
             antigüedad = current_year - (year or current_year)
             if antigüedad < 0 or antigüedad > 30:
                 continue
+            days_on_market = min(float((now - first_seen).days) if first_seen else 0.0, 180.0)
             records.append({
-                "brand":        (brand or "").strip().lower(),
-                "model":        self._base_model(model or ""),
-                "antiguedad":   float(antigüedad),
-                "km":           float(km or 0),
-                "province":     (city or "").strip().lower(),
-                "fuel":         (fuel or "").strip().lower(),
-                "transmission": (transmission or "").strip().lower(),
-                "log_price":    math.log(usd),
+                "brand":          (brand or "").strip().lower(),
+                "model":          self._base_model(model or ""),
+                "antiguedad":     float(antigüedad),
+                "km":             float(km or 0),
+                "province":       (city or "").strip().lower(),
+                "fuel":           (fuel or "").strip().lower(),
+                "transmission":   (transmission or "").strip().lower(),
+                "days_on_market": days_on_market,
+                "price_changes":  float(price_changes_count or 0),
+                "log_price":      math.log(usd),
             })
 
         if len(records) < MIN_TRAINING_SAMPLES:
@@ -145,6 +150,8 @@ class PricingPipeline:
                 self._encode(r["province"],     "province"),
                 self._encode(r["fuel"],         "fuel"),
                 self._encode(r["transmission"], "transmission"),
+                r["days_on_market"],
+                r["price_changes"],
             ]
             for r in records
         ])
@@ -152,7 +159,8 @@ class PricingPipeline:
 
         dataset = lgb.Dataset(X, label=y, feature_name=[
             "brand_enc", "model_enc", "antiguedad", "km",
-            "province_enc", "fuel_enc", "transmission_enc"
+            "province_enc", "fuel_enc", "transmission_enc",
+            "days_on_market", "price_changes",
         ])
         params = {
             "objective":      "regression",
@@ -166,7 +174,7 @@ class PricingPipeline:
         self._model = lgb.train(params, dataset, num_boost_round=200,
                                 valid_sets=[dataset], callbacks=[lgb.log_evaluation(period=-1)])
         self._trained_at = datetime.utcnow()
-        self._save_cached()
+        self._save_cached(session=session)
         logger.info(f"Pricing model trained on {len(records)} listings")
         return True
 
@@ -190,6 +198,8 @@ class PricingPipeline:
                 self._encode((province or "").lower(),     "province"),
                 self._encode("",                           "fuel"),
                 self._encode("",                           "transmission"),
+                0.0,   # days_on_market: predict for a fresh listing
+                0.0,   # price_changes: predict for a fresh listing
             ]])
             log_price = self._model.predict(X)[0]
             return math.exp(log_price)
@@ -209,36 +219,92 @@ class PricingPipeline:
         enc = self._encoders.get(col, {})
         return enc.get(value, enc.get("__default__", 0.0))
 
-    def _save_cached(self):
-        try:
-            with open(MODEL_PATH, "wb") as f:
-                pickle.dump({
-                    "version":    MODEL_VERSION,
-                    "model":      self._model,
-                    "encoders":   self._encoders,
-                    "trained_at": self._trained_at,
-                }, f)
-        except Exception as e:
-            logger.warning(f"Could not save pricing model: {e}")
+    _MODEL_NAME = f"pricing_v{MODEL_VERSION}"
 
-    def _load_cached(self):
-        if not os.path.exists(MODEL_PATH):
-            return
+    def _save_cached(self, session=None):
+        """Save model to PostgreSQL ModelArtifact table (survives Railway deploys)."""
         try:
-            with open(MODEL_PATH, "rb") as f:
-                data = pickle.load(f)
-            if data.get("version") != MODEL_VERSION:
-                logger.warning(f"Pricing model version mismatch (file={data.get('version')}, "
-                               f"expected={MODEL_VERSION}) — discarding, will retrain")
-                os.remove(MODEL_PATH)
-                return
-            self._model      = data.get("model")
-            self._encoders   = data.get("encoders", {})
-            self._trained_at = data.get("trained_at")
-            if self._model:
-                logger.info(f"Pricing model loaded from cache (trained {self._trained_at})")
+            from database import ModelArtifact, SessionLocal
+            payload = {
+                "version":    MODEL_VERSION,
+                "model":      self._model,
+                "encoders":   self._encoders,
+                "trained_at": self._trained_at,
+            }
+            blob = pickle.dumps(payload, protocol=5)
+            sess = session or SessionLocal()
+            own_session = session is None
+            try:
+                obj = sess.get(ModelArtifact, self._MODEL_NAME)
+                if obj is None:
+                    obj = ModelArtifact(model_name=self._MODEL_NAME)
+                    sess.add(obj)
+                obj.version      = MODEL_VERSION
+                obj.artifact     = blob
+                obj.trained_at   = self._trained_at
+                obj.updated_at   = datetime.utcnow()
+                sess.commit()
+                logger.info(f"Pricing model saved to DB ({len(blob):,} bytes)")
+            finally:
+                if own_session:
+                    sess.close()
+            # Also save local copy as fast-load fallback
+            try:
+                with open(MODEL_PATH, "wb") as f:
+                    f.write(blob)
+            except Exception:
+                pass
         except Exception as e:
-            logger.warning(f"Could not load cached pricing model: {e}")
+            logger.warning(f"Could not save pricing model to DB: {e}")
+
+    def _load_cached(self, session=None):
+        """Load model from DB first; fall back to local file if DB row missing."""
+        # Try local file first (fastest, same process restart)
+        if os.path.exists(MODEL_PATH):
+            try:
+                with open(MODEL_PATH, "rb") as f:
+                    data = pickle.load(f)
+                if data.get("version") == MODEL_VERSION:
+                    self._model      = data.get("model")
+                    self._encoders   = data.get("encoders", {})
+                    self._trained_at = data.get("trained_at")
+                    if self._model:
+                        logger.info(f"Pricing model loaded from local cache (trained {self._trained_at})")
+                        return
+                else:
+                    os.remove(MODEL_PATH)
+            except Exception:
+                pass
+
+        # Fall back to DB (survives deploys)
+        try:
+            from database import ModelArtifact, SessionLocal
+            sess = session or SessionLocal()
+            own_session = session is None
+            try:
+                obj = sess.get(ModelArtifact, self._MODEL_NAME)
+                if obj is None:
+                    return
+                data = pickle.loads(obj.artifact)
+                if data.get("version") != MODEL_VERSION:
+                    logger.warning("Pricing model DB version mismatch — will retrain")
+                    return
+                self._model      = data.get("model")
+                self._encoders   = data.get("encoders", {})
+                self._trained_at = data.get("trained_at")
+                if self._model:
+                    logger.info(f"Pricing model loaded from DB (trained {self._trained_at})")
+                    # Write local copy so next startup is faster
+                    try:
+                        with open(MODEL_PATH, "wb") as f:
+                            f.write(obj.artifact)
+                    except Exception:
+                        pass
+            finally:
+                if own_session:
+                    sess.close()
+        except Exception as e:
+            logger.warning(f"Could not load pricing model from DB: {e}")
 
 
 # Module-level singleton — thread-safe

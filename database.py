@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float, Boolean,
-    DateTime, Text, JSON, Index, ForeignKey, event
+    DateTime, Text, JSON, LargeBinary, Index, ForeignKey, event
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
@@ -112,6 +112,42 @@ class MarketReference(Base):
     __table_args__ = (
         Index("idx_mktref_bmh", "brand", "model", "year", unique=True),
     )
+
+
+class SegmentVelocity(Base):
+    """
+    Average days-to-sale per brand/model/year — computed from sold listings.
+    Used to flag segments with fast/slow turnover and to calibrate time-on-market signals.
+    """
+    __tablename__ = "segment_velocity"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    brand = Column(String)
+    model = Column(String)
+    year = Column(Integer)
+    avg_days_to_sale = Column(Float)
+    median_days_to_sale = Column(Float)
+    sample_count = Column(Integer)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_segvel_bmy", "brand", "model", "year", unique=True),
+    )
+
+
+class ModelArtifact(Base):
+    """
+    Stores serialized ML model blobs in PostgreSQL so they survive Railway deploys.
+    Each model_name has one row (upserted on save).
+    """
+    __tablename__ = "model_artifacts"
+
+    model_name  = Column(String, primary_key=True)   # e.g. "pricing_v2"
+    version     = Column(Integer, nullable=False)
+    artifact    = Column(LargeBinary, nullable=False)  # pickle bytes
+    trained_at  = Column(DateTime, nullable=True)
+    sample_count = Column(Integer, nullable=True)
+    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def init_db():

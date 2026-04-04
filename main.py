@@ -184,7 +184,7 @@ async def run_pricing_model_train():
 
 async def run_market_refresh():
     from database import SessionLocal
-    from scorer import update_market_references, rescore_all_active_listings
+    from scorer import update_market_references, rescore_all_active_listings, update_segment_velocity
 
     logger.info("Refreshing market references...")
     session = SessionLocal()
@@ -194,6 +194,7 @@ async def run_market_refresh():
         logger.info("Market references refreshed")
         rescored, upgraded = await loop.run_in_executor(None, rescore_all_active_listings, session)
         logger.info(f"Periodic rescore: {rescored} listings rescored, {upgraded} new deals found")
+        await loop.run_in_executor(None, update_segment_velocity, session)
     except Exception as e:
         logger.error(f"Market refresh failed: {e}")
     finally:

@@ -262,16 +262,19 @@ class MercadoLibreScraper:
                 total = paging.get("total", 0)
 
                 for item in results:
-                    # Filter agencies via API seller data
-                    if config.ONLY_PRIVATE_SELLERS:
-                        seller = item.get("seller", {}) or {}
-                        seller_type = item.get("seller_type") or seller.get("seller_type") or ""
-                        eshop = seller.get("eshop")
-                        car_dealer = seller.get("car_dealer")
-                        if seller_type in ("car_dealer", "real_estate_agency") or eshop or car_dealer:
-                            continue
+                    # Detect agencies via API seller data — mark them, don't skip.
+                    # Agencies are stored as market comparables (real price data) but
+                    # excluded from deal detection via is_agency=True flag.
+                    is_agency = False
+                    seller = item.get("seller", {}) or {}
+                    seller_type = item.get("seller_type") or seller.get("seller_type") or ""
+                    eshop = seller.get("eshop")
+                    car_dealer = seller.get("car_dealer")
+                    if seller_type in ("car_dealer", "real_estate_agency") or eshop or car_dealer:
+                        is_agency = True
                     listing = self._api_result_to_listing(item)
                     if listing and listing["id"] not in seen_ids:
+                        listing["is_agency"] = is_agency
                         seen_ids.add(listing["id"])
                         listings.append(listing)
                         brand_count += 1
