@@ -1,0 +1,93 @@
+name: Daily Auto-Review
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 06:00 Argentina (UTC-3) = 09:00 UTC
+  workflow_dispatch:       # allow manual trigger from GitHub UI
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Configure git
+        run: |
+          git config user.name  "claude-auto-review[bot]"
+          git config user.email "claude-auto-review[bot]@users.noreply.github.com"
+
+      - name: Create review branch
+        run: |
+          BRANCH="auto-review/$(date +%Y-%m-%d)"
+          git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Run Claude Code review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude --print \
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash" \
+            --max-turns 30 \
+            "You are reviewing the car_deal_bot codebase — a Python bot that scrapes MercadoLibre, Autocosmos and Kavak for used car deals in Argentina, scores them, and shows them in a Flask dashboard.
+
+          Review the entire codebase for:
+          1. Bugs or exceptions that could crash Railway deployment
+          2. Logic errors in the scraper (mercadolibre.py, autocosmos.py, kavak.py), scorer (scorer.py), or dashboard (dashboard/app.py)
+          3. Edge cases not handled (None values, empty lists, missing keys)
+          4. Obvious performance improvements
+          5. Broken or dead code paths
+
+          Rules:
+          - Only fix things you are confident are wrong or clearly improvable
+          - Do NOT add new features or refactor working code
+          - Do NOT change business logic (scoring weights, thresholds, filters) — only fix bugs
+          - Do NOT modify requirements.txt or config.py env vars
+          - Keep changes minimal and focused
+          - If you find nothing worth fixing, make no changes
+
+          After reviewing, list what you found and what (if anything) you changed."
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git diff --quiet && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit changes
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git add -A
+          git commit -m "auto: daily review $(date +%Y-%m-%d)"
+
+      - name: Push branch
+        if: steps.changes.outputs.changed == 'true'
+        run: git push origin "$BRANCH"
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "Auto-review fixes $(date +%Y-%m-%d)" \
+            --body "Daily automated review by Claude Code. Review the diff before merging." \
+            --base main \
+            --head "$BRANCH"
