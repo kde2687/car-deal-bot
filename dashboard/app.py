@@ -265,8 +265,7 @@ def create_app() -> Flask:
                 if not headers:
                     result["mode"] = "HTML_FALLBACK (no API credentials)"
                     return
-                result["mode"] = "API_OAUTH2"
-                # Test one query
+                # Test one search query
                 url = (
                     "https://api.mercadolibre.com/sites/MLA/search"
                     "?category=MLA1744&condition=used&sort=date_desc"
@@ -278,6 +277,9 @@ def create_app() -> Flask:
                 if resp.status_code == 200:
                     data = resp.json()
                     result["test_query_total"] = data.get("paging", {}).get("total", 0)
+                    result["mode"] = "API_OAUTH2_WORKS"
+                elif resp.status_code in (401, 403):
+                    result["mode"] = "API_AUTH_OK_BUT_SEARCH_FORBIDDEN — will use HTML fallback"
 
         try:
             asyncio.run(_run())

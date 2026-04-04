@@ -205,11 +205,14 @@ class MercadoLibreScraper:
             logger.debug(f"ML API result parse error: {e}")
             return None
 
-    async def _fetch_api_listings(self, client: httpx.AsyncClient, auth_headers: dict) -> list:
-        """Fetch listings using the ML Search API."""
+    async def _fetch_api_listings(self, client: httpx.AsyncClient, auth_headers: dict) -> list | None:
+        """Fetch listings using the ML Search API.
+        Returns None if the API is inaccessible (403/401) so caller can fall back to HTML.
+        """
         from ml_auth import get_auth_headers
         listings = []
         seen_ids: set = set()
+        _api_accessible: bool | None = None  # None = not yet tested
 
         # Split into year windows to beat the 1000-result API cap.
         # Without this, sort=date_desc fills the cap with all years and
@@ -260,6 +263,12 @@ class MercadoLibreScraper:
                         logger.warning("ML API rate limited, waiting 30s")
                         await asyncio.sleep(30)
                         continue
+                    if resp.status_code in (401, 403):
+                        logger.warning(
+                            f"ML API {resp.status_code} — app lacks search permissions, "
+                            f"switching to HTML fallback"
+                        )
+                        return None  # signal to caller: fall back to HTML
                     if resp.status_code != 200:
                         logger.warning(f"ML API {resp.status_code} for {brand_name} offset {offset}")
                         break
@@ -586,10 +595,13 @@ class MercadoLibreScraper:
 
             if auth_headers:
                 logger.info(
-                    f"ML scraper: using API with OAuth2 | "
+                    f"ML scraper: trying API with OAuth2 | "
                     f"brands={len(self.brands)} min_year={self.min_year} max_km={self.max_km}"
                 )
-                return await self._fetch_api_listings(client, auth_headers)
+                api_result = await self._fetch_api_listings(client, auth_headers)
+                if api_result is not None:
+                    return api_result
+                logger.warning("ML scraper: API returned 403 — falling back to HTML scraping")
             else:
                 logger.warning(
                     f"ML scraper: NO API credentials (ML_APP_ID set={bool(config.ML_APP_ID)}) "
