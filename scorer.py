@@ -607,7 +607,7 @@ def score_listing(session, listing_dict: dict) -> dict:
 def update_market_references(session) -> None:
     combos = (
         session.query(Listing.brand, Listing.model, Listing.year)
-        .filter(Listing.price_ars > 0)
+        .filter((Listing.price_ars > 0) | (Listing.price_usd_equiv > 0))
         .distinct()
         .all()
     )
@@ -808,6 +808,13 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         new_price_ars and old_price_ars
                         and abs(new_price_ars - old_price_ars) / old_price_ars > 0.005  # >0.5% change
                     )
+                    # Also detect price changes for USD-priced listings (ML USD listings have no price_ars)
+                    if not price_changed:
+                        new_price_usd = listing_dict.get("price_usd")
+                        old_price_usd = existing.price_usd
+                        if (new_price_usd and old_price_usd
+                                and abs(new_price_usd - old_price_usd) / old_price_usd > 0.005):
+                            price_changed = True
 
                     existing.last_seen = now
                     existing.price_ars = new_price_ars
@@ -929,7 +936,7 @@ def _mark_sold_listings(session, seen_ids: set, scraped_sources: Optional[set] =
             Listing.last_seen < cutoff,
             Listing.hidden != True,
             Listing.is_agency != True,
-            Listing.price_ars > 0,
+            (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
         )
     )
     # Only consider listings from sources that actually ran this scan

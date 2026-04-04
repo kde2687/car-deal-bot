@@ -93,6 +93,7 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
             session.query(Listing)
             .filter(
                 Listing.is_deal == True,
+                Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
             )
