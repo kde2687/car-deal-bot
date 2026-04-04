@@ -60,6 +60,28 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "gral. san martín": (-34.5731, -58.5336),      # abbreviated form used by ML for GBA partido
     "gral. san martin": (-34.5731, -58.5336),
     "cnel. dorrego": (-38.7222, -61.2847),
+    # Abbreviated "Coronel" / "General" forms used by Autocosmos and Kavak
+    "cnel. suárez": (-37.4608, -61.9248),
+    "cnel. suarez": (-37.4608, -61.9248),
+    "cnel. pringles": (-37.9942, -61.3567),
+    "cnel. rosales": (-38.8167, -62.0833),
+    "cnel. brandsen": (-35.1667, -58.2333),
+    "cnel. belisle": (-39.1869, -65.9542),
+    "gral. madariaga": (-37.0040, -57.1343),
+    "gral. pico": (-35.6573, -63.7574),
+    "gral. rodriguez": (-34.6056, -58.9639),
+    "gral. rodríguez": (-34.6056, -58.9639),
+    "gral. alvear": (-36.0167, -60.0167),
+    "gral. ramirez": (-32.1333, -59.7500),
+    "gral. ramírez": (-32.1333, -59.7500),
+    "gral. fernández oro": (-38.9167, -68.0667),
+    "gral. fernandez oro": (-38.9167, -68.0667),
+    "gral. pedernera": (-35.6833, -65.0833),
+    "gral. acha": (-37.3782, -64.6042),
+    "gral. villegas": (-35.0326, -63.0148),
+    "gral. conesa": (-40.1041, -64.4559),
+    "gral. lagos": (-33.1500, -60.5667),
+    "gral. manuel j. campos": (-37.4614, -63.5858),
     # Missing cities found in DB (deals with null distance)
     "coronel rosales": (-38.8167, -62.0833),   # partido BA ~148km
     "maracó": (-35.6587, -63.7597),             # Gral. Pico dept, La Pampa ~250km

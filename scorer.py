@@ -140,14 +140,22 @@ def _current_year() -> int:
 
 
 def _weighted_median(values: list[float], weights: list[float]) -> float:
-    """Weighted median using sorted cumulative weights."""
+    """Weighted median with linear interpolation at the 50% boundary."""
+    if not values or not weights:
+        return 0.0
     pairs = sorted(zip(values, weights), key=lambda x: x[0])
     total = sum(weights)
     cumulative = 0.0
+    prev_val = pairs[0][0]
     for val, w in pairs:
         cumulative += w
         if cumulative >= total / 2:
-            return val
+            if cumulative > total / 2 and w > 0:
+                # Interpolate back from val towards prev_val
+                over = cumulative - total / 2
+                return val - (over / w) * (val - prev_val)
+            return (prev_val + val) / 2.0
+        prev_val = val
     return pairs[-1][0]
 
 
@@ -633,12 +641,15 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
                 upgraded += 1
             elif not result["is_deal"]:
                 obj.is_deal = False
-                obj.alerted = False  # reset so it can be re-alerted if it becomes a deal again
-            session.commit()
+                obj.alerted = False
             rescored += 1
         except Exception as e:
-            session.rollback()
             logger.debug(f"Rescore failed for {obj.id}: {e}")
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Rescore batch commit failed: {e}")
     logger.info(f"rescore_all_active_listings: {rescored} rescored, {upgraded} new deals")
     return rescored, upgraded
 

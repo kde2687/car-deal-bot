@@ -50,8 +50,20 @@ class KavakScraper:
             year = None
             km = None
             transmission = ""
+
+            # Priority 1: car_year field from RSC (most reliable)
+            year_from_rsc = m.group(6) if m.lastindex and m.lastindex >= 6 else None
+            if year_from_rsc:
+                try:
+                    y = int(year_from_rsc)
+                    if 1990 <= y <= 2030:
+                        year = y
+                except (ValueError, TypeError):
+                    pass
+
+            # Priority 2: fall back to subtitle parsing
             for part in sub_parts:
-                if re.match(r"^\d{4}$", part):
+                if not year and re.match(r"^\d{4}$", part):
                     try:
                         y = int(part)
                         if 1990 <= y <= 2030:
