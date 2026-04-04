@@ -140,7 +140,7 @@ def create_app() -> Flask:
                 Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
-                (Listing.discount_pct == None) | (Listing.discount_pct >= 0),
+                Listing.discount_pct >= 0,
             )
             query = _apply_filters(query, **f)
             query = query.order_by(Listing.score.desc())
@@ -247,6 +247,25 @@ def create_app() -> Flask:
                 listing.deal_reason = "Marcado manualmente como agencia"
                 session.commit()
             return ("", 204)
+        finally:
+            session.close()
+
+    @app.route("/admin/fix_overpriced", methods=["POST"])
+    def fix_overpriced():
+        """Clear is_deal flag for any listing with negative discount_pct."""
+        session = SessionLocal()
+        try:
+            updated = (
+                session.query(Listing)
+                .filter(Listing.is_deal == True, Listing.discount_pct < 0)
+                .all()
+            )
+            count = 0
+            for lst in updated:
+                lst.is_deal = False
+                count += 1
+            session.commit()
+            return jsonify({"fixed": count})
         finally:
             session.close()
 
