@@ -59,7 +59,7 @@ def create_app() -> Flask:
             return jsonify({"error": "unauthorized"}), 401
         return None
 
-    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None):
+    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None, sort=None):
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
         if model:
