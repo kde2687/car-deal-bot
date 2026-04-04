@@ -382,11 +382,17 @@ def create_app() -> Flask:
         result = {
             "ml_app_id_set": bool(cfg.ML_APP_ID),
             "ml_secret_set": bool(cfg.ML_CLIENT_SECRET),
-            "proxy_set": bool(cfg.ML_PROXY_URL),
+            "proxy_set": bool(cfg.ML_PROXY_URL or cfg.ML_PROXY_URLS),
         }
 
         async def _run():
-            proxy = cfg.ML_PROXY_URL or None
+            import random
+            if cfg.ML_PROXY_URLS:
+                proxy = random.choice(cfg.ML_PROXY_URLS)
+            elif cfg.ML_PROXY_URL:
+                proxy = cfg.ML_PROXY_URL
+            else:
+                proxy = None
             async with httpx.AsyncClient(follow_redirects=True, proxy=proxy) as client:
                 from ml_auth import get_auth_headers
                 headers = await get_auth_headers(client)
