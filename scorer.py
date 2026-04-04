@@ -559,7 +559,18 @@ def score_listing(session, listing_dict: dict) -> dict:
         "brand_fallback": 10.0,   # same brand, any model — low trust
         "ml_model":       8.0,
     }
-    effective_min_discount = _deal_min_discount.get(ref_type, 100.0) - motivated_discount_reduction
+    base_min = _deal_min_discount.get(ref_type, 100.0)
+    # Low-confidence references get higher discount requirements.
+    # confidence_index < 40 → +4pp (mixed trim pool, few comparables)
+    # confidence_index 40-60 → +2pp
+    # confidence_index > 60 → no penalty
+    if confidence_index < 40:
+        confidence_penalty = 4.0
+    elif confidence_index < 60:
+        confidence_penalty = 2.0
+    else:
+        confidence_penalty = 0.0
+    effective_min_discount = base_min + confidence_penalty - motivated_discount_reduction
     is_deal = (
         discount_pct >= effective_min_discount
         and ref_type != "cold"

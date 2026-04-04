@@ -251,6 +251,68 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    @app.route("/admin/ml_login")
+    def ml_login():
+        """Redirect to ML OAuth2 authorization page (authorization_code flow)."""
+        from ml_auth import get_authorization_url
+        url = get_authorization_url()
+        return (
+            f'<h2>Autorizar CarDeal Bot en MercadoLibre</h2>'
+            f'<p>Hacé clic para autorizar. Serás redirigido a ML y luego de vuelta aquí.</p>'
+            f'<a href="{url}" style="padding:12px 24px;background:#3483FA;color:white;'
+            f'text-decoration:none;border-radius:6px;font-size:16px;">Autorizar en ML</a>'
+        )
+
+    @app.route("/admin/ml_callback")
+    def ml_callback():
+        """Handle ML OAuth2 callback — exchange code for tokens."""
+        import asyncio, httpx, config as cfg
+        code = request.args.get("code")
+        if not code:
+            return jsonify({"error": "no code in callback", "args": dict(request.args)}), 400
+
+        result = {}
+        async def _exchange():
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                resp = await client.post(
+                    "https://api.mercadolibre.com/oauth/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "client_id": cfg.ML_APP_ID,
+                        "client_secret": cfg.ML_CLIENT_SECRET,
+                        "code": code,
+                        "redirect_uri": "https://cardeal.ar/admin/ml_callback",
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=15.0,
+                )
+                result["status"] = resp.status_code
+                data = resp.json()
+                result["response"] = data
+                if resp.status_code == 200 and "access_token" in data:
+                    from ml_auth import _manager
+                    _manager.set_tokens(
+                        data["access_token"],
+                        data.get("refresh_token", ""),
+                        data.get("expires_in", 21600),
+                    )
+                    result["ok"] = True
+
+        try:
+            asyncio.run(_exchange())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_exchange())
+            loop.close()
+
+        if result.get("ok"):
+            return (
+                "<h2>✓ Autorización exitosa</h2>"
+                "<p>El refresh_token fue guardado. ML search API funcionará en el próximo scan.</p>"
+                "<a href='/'>Ir al dashboard</a>"
+            )
+        return jsonify({"error": "token exchange failed", "detail": result}), 400
+
     @app.route("/admin/ml_token_refresh", methods=["POST"])
     def ml_token_refresh():
         """Force ML OAuth token refresh to pick up new app permissions."""
