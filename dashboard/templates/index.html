@@ -181,7 +181,7 @@
       <div class="card-body">
         <form method="GET" action="{{ '/' if view == 'deals' else '/all' }}" class="row g-2 align-items-end">
 
-          <!-- 1b. Marca -->
+          <!-- ── ROW 1 (12 cols): Marca(2) Modelo(2) Ciudad(2) MiCiudad(2) Dist(1) AñoMin(1) AñoMax(1) KMmax(1) ── -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-car-front me-1"></i>Marca</label>
             <select name="brand" class="form-select form-select-sm" id="brandSelect">
@@ -192,7 +192,6 @@
             </select>
           </div>
 
-          <!-- ROW 1: Marca / Modelo / Ciudad vehículo / Mi ciudad / Dist. máx / Año mín / Año máx / KM máx -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-tag me-1"></i>Modelo</label>
             <input type="text" name="model" class="form-control form-control-sm"
@@ -219,7 +218,7 @@
             </datalist>
           </div>
 
-          <div class="col-6 col-md-1">
+          <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. máx</label>
             <input type="number" name="max_distance" class="form-control form-control-sm"
                    placeholder="km" value="{{ filters.max_distance }}" min="0" step="50" />
@@ -237,17 +236,15 @@
                    placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
           </div>
 
-          <div class="col-6 col-md-2">
+          <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1">KM máx</label>
             <input type="number" name="max_km" class="form-control form-control-sm"
-                   placeholder="150000" value="{{ filters.max_km }}" min="0" step="10000" />
+                   placeholder="150k" value="{{ filters.max_km }}" min="0" step="10000" />
           </div>
 
-          <!-- 1-col spacer to fill row 1 to 12 cols (2+2+2+1+1+1+2 = 11, +1 spacer = 12) -->
-          <div class="col-md-1 d-none d-md-block"></div>
-
-          <!-- ROW 2 (aligned under row 1): Fuente / Publicado / Bajas de precio / Score ≥ / Buttons -->
-          <div class="col-6 col-md-2">
+          <!-- ── ROW 2 (12 cols): offset(2) Fuente(2) Publicado(2) Bajas(2) Score(2) Botones(2) ── -->
+          <!-- offset-md-2 makes Fuente start under Modelo, Publicado under Ciudad, etc. -->
+          <div class="col-6 col-md-2 offset-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-database me-1"></i>Fuente</label>
             <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="">Todas</option>
@@ -287,13 +284,12 @@
                    oninput="document.getElementById('scoreVal').textContent = this.value" />
           </div>
 
-          <!-- Buttons (row 2 end) -->
-          <div class="col-12 col-md-3 d-flex align-items-end gap-2">
-            <button type="submit" class="btn btn-primary btn-sm">
+          <div class="col-12 col-md-2 d-flex align-items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm flex-grow-1">
               <i class="bi bi-funnel-fill me-1"></i>Filtrar
             </button>
             <a href="{{ '/' if view == 'deals' else '/all' }}" class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-x-lg me-1"></i>Limpiar
+              <i class="bi bi-x-lg"></i>
             </a>
           </div>
 
