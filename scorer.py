@@ -907,7 +907,10 @@ def _mark_sold_listings(session, seen_ids: set, scraped_sources: Optional[set] =
     Returns count of newly sold listings.
     """
     from database import PriceHistory
-    cutoff = datetime.utcnow() - timedelta(minutes=2 * config.SCAN_INTERVAL_MINUTES)
+    # Use a 6-hour window regardless of SCAN_INTERVAL_MINUTES to avoid
+    # premature sold-marking when the actual scan interval is 2h but
+    # SCAN_INTERVAL_MINUTES is set to a smaller value in config.
+    cutoff = datetime.utcnow() - timedelta(hours=6)
     q = (
         session.query(Listing)
         .filter(

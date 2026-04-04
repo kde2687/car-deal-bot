@@ -192,71 +192,64 @@
             </select>
           </div>
 
-          <!-- 2. Modelo -->
+          <!-- ROW 1: Marca / Modelo / Ciudad vehículo / Mi ciudad / Dist. máx / Año mín / Año máx / KM máx -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-tag me-1"></i>Modelo</label>
             <input type="text" name="model" class="form-control form-control-sm"
                    placeholder="ej: Hilux, Gol…" value="{{ filters.model }}" />
           </div>
 
-          <!-- 2b. Ciudad -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-pin-map me-1"></i>Ciudad del vehículo</label>
             <input type="text" name="city" class="form-control form-control-sm"
                    placeholder="ej: Rosario, CABA…" value="{{ filters.city }}"
                    list="cityList" autocomplete="off" />
             <datalist id="cityList">
-              {% for c in unique_cities %}
-                <option value="{{ c }}">
-              {% endfor %}
+              {% for c in unique_cities %}<option value="{{ c }}">{% endfor %}
             </datalist>
           </div>
 
-          <!-- 3. Ciudad origen + distancia -->
           <div class="col-6 col-md-2">
-            <label class="form-label small fw-semibold mb-1">
-              <i class="bi bi-house-fill me-1"></i>Mi ciudad
-            </label>
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-house-fill me-1"></i>Mi ciudad</label>
             <input type="text" name="origin_city" class="form-control form-control-sm"
                    value="{{ filters.origin_city or 'Darregueira' }}"
                    list="originCityList" autocomplete="off" />
             <datalist id="originCityList">
-              {% for c in all_origin_cities %}
-                <option value="{{ c|title }}">
-              {% endfor %}
+              {% for c in all_origin_cities %}<option value="{{ c|title }}">{% endfor %}
             </datalist>
           </div>
+
           <div class="col-6 col-md-1">
-            <label class="form-label small fw-semibold mb-1">
-              <i class="bi bi-geo-alt me-1"></i>Dist. máx
-            </label>
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. máx</label>
             <input type="number" name="max_distance" class="form-control form-control-sm"
                    placeholder="km" value="{{ filters.max_distance }}" min="0" step="50" />
           </div>
 
-          <!-- 4. Año min/max -->
           <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1">Año mín</label>
             <input type="number" name="min_year" class="form-control form-control-sm"
                    placeholder="2015" value="{{ filters.min_year }}" min="1990" max="2030" />
           </div>
+
           <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1">Año máx</label>
             <input type="number" name="max_year" class="form-control form-control-sm"
                    placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
           </div>
 
-          <!-- 5. KM máx -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1">KM máx</label>
             <input type="number" name="max_km" class="form-control form-control-sm"
                    placeholder="150000" value="{{ filters.max_km }}" min="0" step="10000" />
           </div>
 
-          <!-- 5b. Fuente -->
-          <div class="col-6 col-md-1">
+          <!-- 1-col spacer to fill row 1 to 12 cols (2+2+2+1+1+1+2 = 11, +1 spacer = 12) -->
+          <div class="col-md-1 d-none d-md-block"></div>
+
+          <!-- ROW 2 (aligned under row 1): Fuente / Publicado / Bajas de precio / Score ≥ / Buttons -->
+          <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-database me-1"></i>Fuente</label>
-            <select name="source" class="form-select form-select-sm">
+            <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="">Todas</option>
               <option value="mercadolibre" {{ 'selected' if filters.source == 'mercadolibre' else '' }}>MercadoLibre</option>
               <option value="kavak"         {{ 'selected' if filters.source == 'kavak' else '' }}>Kavak</option>
@@ -264,10 +257,9 @@
             </select>
           </div>
 
-          <!-- 5c. Publicado -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-calendar3 me-1"></i>Publicado</label>
-            <select name="since" class="form-select form-select-sm">
+            <select name="since" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="">Cualquier fecha</option>
               <option value="today" {{ 'selected' if filters.since == 'today' else '' }}>Hoy</option>
               <option value="week"  {{ 'selected' if filters.since == 'week'  else '' }}>Última semana</option>
@@ -276,10 +268,9 @@
             </select>
           </div>
 
-          <!-- 5d. Bajas de precio -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-arrow-down-circle me-1"></i>Bajas de precio</label>
-            <select name="min_price_drops" class="form-select form-select-sm">
+            <select name="min_price_drops" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="">Cualquiera</option>
               <option value="1" {{ 'selected' if filters.min_price_drops|string == '1' else '' }}>≥ 1 baja</option>
               <option value="2" {{ 'selected' if filters.min_price_drops|string == '2' else '' }}>≥ 2 bajas</option>
@@ -287,8 +278,7 @@
             </select>
           </div>
 
-          <!-- 6. Score mín -->
-          <div class="col-6 col-md-1">
+          <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1">
               Score ≥ <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>
             </label>
@@ -297,13 +287,13 @@
                    oninput="document.getElementById('scoreVal').textContent = this.value" />
           </div>
 
-          <!-- Buttons -->
-          <div class="col-12 col-md-1 d-flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm w-100">
-              <i class="bi bi-funnel-fill"></i>
+          <!-- Buttons (row 2 end) -->
+          <div class="col-12 col-md-3 d-flex align-items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-funnel-fill me-1"></i>Filtrar
             </button>
             <a href="{{ '/' if view == 'deals' else '/all' }}" class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-x-lg"></i>
+              <i class="bi bi-x-lg me-1"></i>Limpiar
             </a>
           </div>
 
@@ -340,14 +330,6 @@
               </div>
             {% endif %}
 
-            <!-- Score badge (top-right) -->
-            {% if listing.score >= 20 %}
-              <span class="badge-score badge bg-success">{{ listing.score | int }}</span>
-            {% elif listing.score >= 10 %}
-              <span class="badge-score badge bg-warning text-dark">{{ listing.score | int }}</span>
-            {% elif listing.score > 0 %}
-              <span class="badge-score badge bg-secondary">{{ listing.score | int }}</span>
-            {% endif %}
 
           </div>
 

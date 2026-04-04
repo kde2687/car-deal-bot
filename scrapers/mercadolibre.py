@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -210,29 +211,44 @@ class MercadoLibreScraper:
         listings = []
         seen_ids: set = set()
 
-        # Pre-filters applied at API level — each 1000-result cap contains only relevant listings
-        api_attr_filters = (
-            f"&VEHICLE_YEAR-from={self.min_year}"
-            f"&KILOMETERS-from={config.MIN_KM}"
-            f"&KILOMETERS-to={self.max_km}"
-        )
+        # Split into year windows to beat the 1000-result API cap.
+        # Without this, sort=date_desc fills the cap with all years and
+        # local year/km filtering leaves very few listings.
+        current_year = datetime.utcnow().year
+        year_windows = [
+            (self.min_year, self.min_year + 2),
+            (self.min_year + 3, self.min_year + 5),
+            (self.min_year + 6, current_year + 1),
+        ]
 
-        # Build search queries: one per brand + one general sweep
-        queries = [(brand, f'q={brand.lower().replace(" ", "+")}') for brand in self.brands]
-        queries.append(("(all)", ""))   # general sweep — catches unlisted brands
+        # Build search queries: one per brand per year window + one general sweep
+        queries = []
+        for brand in self.brands:
+            q = f'q={brand.lower().replace(" ", "+")}'
+            for yr_from, yr_to in year_windows:
+                queries.append((f"{brand} {yr_from}-{yr_to}", q, yr_from, yr_to))
+        # General sweep for unlisted brands — full year range
+        queries.append(("(all)", "", self.min_year, current_year + 1))
 
-        for brand_name, q_param in queries:
+        for brand_name, q_param, yr_from, yr_to in queries:
             brand_count = 0
             offset = 0
             limit = 50
             max_results = 1000  # ML API hard cap per query
+
+            window_filters = (
+                f"&VEHICLE_YEAR-from={yr_from}"
+                f"&VEHICLE_YEAR-to={yr_to}"
+                f"&KILOMETERS-from={config.MIN_KM}"
+                f"&KILOMETERS-to={self.max_km}"
+            )
 
             while offset < max_results:
                 params = (
                     f"category={ML_CATEGORY}"
                     f"&condition=used"
                     f"&sort=date_desc"
-                    f"{api_attr_filters}"
+                    f"{window_filters}"
                     f"&limit={limit}"
                     f"&offset={offset}"
                 )
