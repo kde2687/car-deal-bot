@@ -193,6 +193,7 @@ def create_app() -> Flask:
                 sources=[], unique_brands=unique_brands, unique_cities=unique_cities,
                 origin_name=f["origin_city"] or ORIGIN_NAME,
                 origin_coords=origin_coords, all_origin_cities=sorted(CITY_COORDS.keys()),
+                usd_rate=config.get_usd_mep_rate(),
                 view="deals")
         finally:
             session.close()
@@ -208,7 +209,6 @@ def create_app() -> Flask:
                 Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
-                Listing.discount_pct >= 0,
             )
             query = _apply_filters(query, **f)
             sort = f.get("sort", "score_desc")
@@ -251,6 +251,7 @@ def create_app() -> Flask:
                 sources=[], unique_brands=unique_brands, unique_cities=unique_cities,
                 origin_name=f["origin_city"] or ORIGIN_NAME,
                 origin_coords=origin_coords, all_origin_cities=sorted(CITY_COORDS.keys()),
+                usd_rate=config.get_usd_mep_rate(),
                 view="all")
         finally:
             session.close()

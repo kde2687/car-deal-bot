@@ -336,6 +336,7 @@
                 ${{ listing.price_ars | format_price }} ARS
               {% elif listing.price_usd %}
                 ${{ listing.price_usd | format_price }} USD
+                {% if usd_rate %}<span class="text-muted small d-block">(≈ ${{ (listing.price_usd * usd_rate) | format_price }} ARS)</span>{% endif %}
               {% else %}
                 Sin precio
               {% endif %}
@@ -349,7 +350,11 @@
                       title="Descuento vs precio promedio de mercado">
                   {% if dp >= 0 %}↓{{ dp | int }}% off{% else %}↑{{ (dp * -1) | int }}% sobre precio{% endif %}
                 </span>
-                <span class="text-muted small">ref. ${{ listing.market_price_ars | format_price }}</span>
+                {% if listing.price_usd and not listing.price_ars and usd_rate %}
+                  <span class="text-muted small">ref. ${{ (listing.market_price_ars / usd_rate) | format_price }} USD</span>
+                {% else %}
+                  <span class="text-muted small">ref. ${{ listing.market_price_ars | format_price }} ARS</span>
+                {% endif %}
                 {# Precision badge — secondary, right side #}
                 {% if listing.confidence_index is not none and listing.confidence_index > 0 %}
                   {% set ci = listing.confidence_index %}
