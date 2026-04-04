@@ -250,16 +250,14 @@ async def main():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         scheduler = AsyncIOScheduler()
-        # Scans 4x/día — Argentina UTC-3: 6am=9UTC, 12pm=15UTC, 18pm=21UTC, 00hs=3UTC
-        for scan_id, utc_hour in [("scan_6am", 9), ("scan_12pm", 15), ("scan_18pm", 21), ("scan_0hs", 3)]:
-            scheduler.add_job(
-                run_scan,
-                "cron",
-                hour=utc_hour, minute=0,
-                timezone="UTC",
-                args=[alerter],
-                id=scan_id,
-            )
+        # Scan cada 2 horas
+        scheduler.add_job(
+            run_scan,
+            "interval",
+            hours=2,
+            args=[alerter],
+            id="scan_every_2h",
+        )
         scheduler.add_job(
             run_market_refresh,
             "interval",
@@ -300,7 +298,7 @@ async def main():
             id="telegram_digest_8am",
         )
         scheduler.start()
-        logger.info("Scheduler started: scans at 6am/12pm/6pm/00hs ARG, market refresh every 6h")
+        logger.info("Scheduler started: scans every 2h, market refresh every 4h")
     except Exception as e:
         logger.error(f"Scheduler failed to start: {e}")
         scheduler = None
