@@ -210,6 +210,12 @@ class MercadoLibreScraper:
         listings = []
         seen_ids: set = set()
 
+        # Pre-filters applied at API level — each 1000-result cap contains only relevant listings
+        api_attr_filters = (
+            f"&VEHICLE_YEAR-from={self.min_year}"
+            f"&KILOMETERS-to={self.max_km}"
+        )
+
         # Build search queries: one per brand + one general sweep
         queries = [(brand, f'q={brand.lower().replace(" ", "+")}') for brand in self.brands]
         queries.append(("(all)", ""))   # general sweep — catches unlisted brands
@@ -224,6 +230,8 @@ class MercadoLibreScraper:
                 params = (
                     f"category={ML_CATEGORY}"
                     f"&condition=used"
+                    f"&sort=date_desc"
+                    f"{api_attr_filters}"
                     f"&limit={limit}"
                     f"&offset={offset}"
                 )
