@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout
@@ -33,12 +32,6 @@ jobs:
         run: |
           git config user.name  "claude-auto-review[bot]"
           git config user.email "claude-auto-review[bot]@users.noreply.github.com"
-
-      - name: Create review branch
-        run: |
-          BRANCH="auto-review/$(date +%Y-%m-%d)"
-          git checkout -b "$BRANCH"
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
       - name: Run Claude Code review
         env:
@@ -66,28 +59,9 @@ jobs:
 
           After reviewing, list what you found and what (if anything) you changed."
 
-      - name: Check for changes
-        id: changes
+      - name: Commit and push directly to main
         run: |
-          git diff --quiet && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
-
-      - name: Commit changes
-        if: steps.changes.outputs.changed == 'true'
-        run: |
+          git diff --quiet && git diff --cached --quiet && echo "No changes." && exit 0
           git add -A
           git commit -m "auto: daily review $(date +%Y-%m-%d)"
-
-      - name: Push branch
-        if: steps.changes.outputs.changed == 'true'
-        run: git push origin "$BRANCH"
-
-      - name: Create Pull Request
-        if: steps.changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr create \
-            --title "Auto-review fixes $(date +%Y-%m-%d)" \
-            --body "Daily automated review by Claude Code. Review the diff before merging." \
-            --base main \
-            --head "$BRANCH"
+          git push origin main
