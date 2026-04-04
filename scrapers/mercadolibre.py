@@ -164,7 +164,7 @@ class MercadoLibreScraper:
                 city = city_obj.get("name", "") if isinstance(city_obj, dict) else ""
 
             # Brand / model
-            brand = brand_attr or (title.split()[0] if title else "")
+            brand = brand_attr or (next(iter(title.split()), "") if title else "")
             model = model_attr or title
             if model.lower().startswith(brand.lower()):
                 model = model[len(brand):].strip()
@@ -444,7 +444,7 @@ class MercadoLibreScraper:
                 if price_usd is None or price_usd < config.MIN_PRICE_USD or price_usd > config.MAX_PRICE_USD:
                     return None
             link_el = li_el.select_one("a[href*='mercadolibre']")
-            href = link_el["href"] if link_el else ""
+            href = link_el.get("href", "") if link_el else ""
             item_id = self._extract_item_id(href)
             if not item_id:
                 return None
@@ -466,7 +466,9 @@ class MercadoLibreScraper:
                         pass
                 elif "km" in txt.lower():
                     km = self._parse_km(txt)
-            if year and year < self.min_year:
+            if not year:
+                return None  # no year = can't score reliably (matches API scraper behaviour)
+            if year < self.min_year:
                 return None
             if km is not None and km > self.max_km:
                 return None
@@ -600,7 +602,7 @@ class MercadoLibreScraper:
                 break
             for card in cards:
                 title_el = card.select_one(".poly-component__title, .ui-search-item__title, h2")
-                brand_guess = title_el.get_text(strip=True).split()[0] if title_el else "unknown"
+                brand_guess = next(iter(title_el.get_text(strip=True).split()), "unknown") if title_el else "unknown"
                 listing = self._parse_card(card, brand_guess)
                 if listing and listing["id"] not in seen_ids:
                     seen_ids.add(listing["id"])

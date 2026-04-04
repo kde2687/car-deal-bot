@@ -461,6 +461,7 @@ def create_app() -> Flask:
             session.close()
 
     _scan_running = False
+    _scan_lock = __import__("threading").Lock()
 
     @app.route("/admin/scan", methods=["POST"])
     def trigger_scan():
@@ -468,12 +469,13 @@ def create_app() -> Flask:
         err = _check_admin()
         if err: return err
         nonlocal _scan_running
-        if _scan_running:
-            return jsonify({"status": "already running"}), 409
         import threading
+        with _scan_lock:
+            if _scan_running:
+                return jsonify({"status": "already running"}), 409
+            _scan_running = True
         def _run():
             nonlocal _scan_running
-            _scan_running = True
             try:
                 import asyncio
                 from main import run_scan
@@ -482,7 +484,8 @@ def create_app() -> Flask:
                 import logging
                 logging.getLogger(__name__).error(f"Manual scan failed: {e}", exc_info=True)
             finally:
-                _scan_running = False
+                with _scan_lock:
+                    _scan_running = False
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         return jsonify({"status": "scan started"})
@@ -546,7 +549,7 @@ def create_app() -> Flask:
             if not listing:
                 return jsonify({"error": "not found"}), 404
 
-            usd_rate = get_usd_mep_rate()
+            usd_rate = get_usd_mep_rate() or 1350.0
             year = listing.year or 2010
             brand = listing.brand or ""
             year_range = list(range(year - 2, year + 3))

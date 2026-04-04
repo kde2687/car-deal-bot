@@ -101,15 +101,15 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
             .limit(10)
             .all()
         )
+
+        if not deals:
+            logger.info("Email digest: no deals found, skipping")
+            return False
+
+        import config as cfg
+        html = _build_html(deals, dashboard_url=cfg.DASHBOARD_URL)
     finally:
         session.close()
-
-    if not deals:
-        logger.info("Email digest: no deals found, skipping")
-        return False
-
-    import config as cfg
-    html = _build_html(deals, dashboard_url=cfg.DASHBOARD_URL)
     date_str = datetime.now().strftime("%d/%m/%Y")
 
     recipients = [r.strip() for r in recipient.split(",") if r.strip()]

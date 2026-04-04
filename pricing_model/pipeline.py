@@ -104,7 +104,9 @@ class PricingPipeline:
                   else (price_ars / usd_rate if price_ars else None)
             if not usd or usd <= 0:
                 continue
-            antigüedad = current_year - (year or current_year)
+            if year is None:
+                continue
+            antigüedad = current_year - year
             if antigüedad < 0 or antigüedad > 30:
                 continue
             days_on_market = min(float((now - first_seen).days) if first_seen else 0.0, 180.0)

@@ -7,7 +7,10 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 import config
 
-_connect_args = {"check_same_thread": False, "timeout": 30} if "sqlite" in config.DATABASE_URL else {}
+if "sqlite" in config.DATABASE_URL:
+    _connect_args = {"check_same_thread": False, "timeout": 30}
+else:
+    _connect_args = {"connect_timeout": 30}  # PostgreSQL connection timeout
 engine = create_engine(config.DATABASE_URL, connect_args=_connect_args)
 
 # Enable WAL mode for SQLite — allows concurrent reads during writes

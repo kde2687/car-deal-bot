@@ -1,7 +1,9 @@
 import asyncio
+import atexit
 import logging
 import logging.handlers
 import os
+import signal
 import sys
 import time
 import threading
@@ -40,6 +42,7 @@ def setup_logging():
     root_logger.setLevel(log_level)
     root_logger.addHandler(rotating_handler)
     root_logger.addHandler(stream_handler)
+    atexit.register(logging.shutdown)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -94,7 +97,7 @@ async def run_scan(telegram_alerter=None):
     new_count, deal_count, updated_count = (0, 0, 0)
     new_ml_ids = []
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         new_count, deal_count, updated_count, new_ml_ids = await loop.run_in_executor(
             None, process_listings, all_listings
         )
@@ -142,13 +145,16 @@ async def run_email_digest():
     if not cfg.SMTP_USER or not cfg.SMTP_PASSWORD:
         logger.info("Email digest skipped: SMTP credentials not set")
         return
-    from alerts.email_digest import send_daily_digest
-    loop = asyncio.get_event_loop()
-    ok = await loop.run_in_executor(
-        None, send_daily_digest, cfg.SMTP_USER, cfg.SMTP_PASSWORD, cfg.DIGEST_RECIPIENT
-    )
-    if ok:
-        logger.info("Daily email digest sent")
+    try:
+        from alerts.email_digest import send_daily_digest
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(
+            None, send_daily_digest, cfg.SMTP_USER, cfg.SMTP_PASSWORD, cfg.DIGEST_RECIPIENT
+        )
+        if ok:
+            logger.info("Daily email digest sent")
+    except Exception as e:
+        logger.error(f"Email digest failed: {e}")
 
 
 async def run_db_backup():
@@ -182,7 +188,7 @@ async def run_pricing_model_train():
     from pricing_model.pipeline import maybe_retrain
     session = SessionLocal()
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, maybe_retrain, session)
     except Exception as e:
         logger.error(f"Pricing model training failed: {e}")
@@ -197,7 +203,7 @@ async def run_market_refresh():
     logger.info("Refreshing market references...")
     session = SessionLocal()
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, update_market_references, session)
         logger.info("Market references refreshed")
         rescored, upgraded = await loop.run_in_executor(None, rescore_all_active_listings, session)
@@ -321,18 +327,32 @@ async def main():
     console.print(f"\n[bold green]Dashboard running at http://localhost:5000[/bold green]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
+    stop_event = asyncio.Event()
+
+    def _request_shutdown():
+        logger.info("Shutdown requested (SIGTERM/SIGINT)")
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown)
+        except (NotImplementedError, OSError):
+            pass  # Windows doesn't support add_signal_handler
+
     try:
-        await asyncio.Event().wait()
+        await stop_event.wait()
     except KeyboardInterrupt:
-        console.print("\n[yellow]Shutting down...[/yellow]")
-        logger.info("Shutdown requested")
-        if scheduler:
-            try:
-                scheduler.shutdown(wait=False)
-            except Exception:
-                pass
-        await alerter.shutdown()
-        console.print("[green]Goodbye.[/green]")
+        pass
+    console.print("\n[yellow]Shutting down...[/yellow]")
+    logger.info("Shutdown requested")
+    if scheduler:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.warning(f"Scheduler shutdown failed: {e}")
+    await alerter.shutdown()
+    console.print("[green]Goodbye.[/green]")
 
 
 if __name__ == "__main__":
