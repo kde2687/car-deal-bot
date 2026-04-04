@@ -239,8 +239,6 @@ class MercadoLibreScraper:
             window_filters = (
                 f"&VEHICLE_YEAR-from={yr_from}"
                 f"&VEHICLE_YEAR-to={yr_to}"
-                f"&KILOMETERS-from={config.MIN_KM}"
-                f"&KILOMETERS-to={self.max_km}"
             )
 
             while offset < max_results:
@@ -275,7 +273,10 @@ class MercadoLibreScraper:
                 total = paging.get("total", 0)
 
                 if offset == 0:
-                    logger.info(f"ML API [{brand_name}]: {total} total results in API")
+                    logger.info(
+                        f"ML API [{brand_name} {yr_from}-{yr_to}]: "
+                        f"{total} total in API, fetching up to {min(total, max_results)}"
+                    )
 
                 if not results:
                     break
@@ -304,12 +305,15 @@ class MercadoLibreScraper:
 
                 await asyncio.sleep(0.3)   # polite delay — well within 18k/hr limit
 
-            if brand_count:
-                logger.info(f"ML API {brand_name}: {brand_count} listings")
+            logger.info(f"ML API [{brand_name} {yr_from}-{yr_to}]: {brand_count} passed local filters")
 
         agencies = sum(1 for l in listings if l.get("is_agency"))
         private = len(listings) - agencies
-        logger.info(f"ML API total: {len(listings)} listings ({private} private, {agencies} agencies)")
+        logger.info(
+            f"ML API TOTAL: {len(listings)} listings "
+            f"({private} private, {agencies} agencies) "
+            f"from {len(queries)} queries"
+        )
         return listings
 
     # ------------------------------------------------------------------
@@ -581,10 +585,16 @@ class MercadoLibreScraper:
             auth_headers = await get_auth_headers(client)
 
             if auth_headers:
-                logger.info("ML scraper: using API with OAuth2 (no cookies needed)")
+                logger.info(
+                    f"ML scraper: using API with OAuth2 | "
+                    f"brands={len(self.brands)} min_year={self.min_year} max_km={self.max_km}"
+                )
                 return await self._fetch_api_listings(client, auth_headers)
             else:
-                logger.warning("ML scraper: no API credentials — falling back to HTML scraping with cookies")
+                logger.warning(
+                    f"ML scraper: NO API credentials (ML_APP_ID set={bool(config.ML_APP_ID)}) "
+                    f"— falling back to HTML scraping"
+                )
                 cookies = _load_cookies()
                 if cookies:
                     logger.info(f"ML scraper: using session cookies ({len(cookies)} loaded)")
