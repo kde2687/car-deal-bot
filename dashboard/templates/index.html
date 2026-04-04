@@ -181,7 +181,30 @@
       <div class="card-body">
         <form method="GET" action="{{ '/' if view == 'deals' else '/all' }}" class="row g-2 align-items-end">
 
-          <!-- 1. Marca -->
+          <!-- 1. Fuente -->
+          <div class="col-6 col-md-1">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-database me-1"></i>Fuente</label>
+            <select name="source" class="form-select form-select-sm">
+              <option value="">Todas</option>
+              <option value="mercadolibre" {{ 'selected' if filters.source == 'mercadolibre' else '' }}>MercadoLibre</option>
+              <option value="kavak"         {{ 'selected' if filters.source == 'kavak' else '' }}>Kavak</option>
+              <option value="autocosmos"    {{ 'selected' if filters.source == 'autocosmos' else '' }}>Autocosmos</option>
+            </select>
+          </div>
+
+          <!-- 1c. Publicado -->
+          <div class="col-6 col-md-1">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-calendar3 me-1"></i>Publicado</label>
+            <select name="since" class="form-select form-select-sm">
+              <option value="">Cualquier fecha</option>
+              <option value="today" {{ 'selected' if filters.since == 'today' else '' }}>Hoy</option>
+              <option value="week"  {{ 'selected' if filters.since == 'week'  else '' }}>Última semana</option>
+              <option value="month" {{ 'selected' if filters.since == 'month' else '' }}>Último mes</option>
+              <option value="older" {{ 'selected' if filters.since == 'older' else '' }}>Más de un mes</option>
+            </select>
+          </div>
+
+          <!-- 1b. Marca -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-car-front me-1"></i>Marca</label>
             <select name="brand" class="form-select form-select-sm" id="brandSelect">

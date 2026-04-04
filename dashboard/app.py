@@ -48,13 +48,15 @@ def create_app() -> Flask:
     app.jinja_env.filters["format_price"] = format_price
     app.jinja_env.filters["time_ago"] = time_ago
 
-    def _apply_filters(query, brand, model, city, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False):
+    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since=""):
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
         if model:
             query = query.filter(Listing.model.ilike(f"%{model}%"))
         if city:
             query = query.filter(Listing.seller_city.ilike(f"%{city}%"))
+        if source:
+            query = query.filter(Listing.source == source)
         if min_year:
             query = query.filter(Listing.year >= min_year)
         if max_year:
@@ -66,6 +68,17 @@ def create_app() -> Flask:
         if new_today:
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             query = query.filter(Listing.first_seen >= today_start)
+        if since:
+            now = datetime.utcnow()
+            if since == "today":
+                cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                query = query.filter(Listing.first_seen >= cutoff)
+            elif since == "week":
+                query = query.filter(Listing.first_seen >= now - timedelta(days=7))
+            elif since == "month":
+                query = query.filter(Listing.first_seen >= now - timedelta(days=30))
+            elif since == "older":
+                query = query.filter(Listing.first_seen < now - timedelta(days=30))
         # Distance filter: SQL fast-path only when using the default origin (Darregueira)
         origin_lower = (origin_city or "").lower().strip()
         using_default_origin = not origin_lower or "darregueira" in origin_lower
@@ -98,6 +111,7 @@ def create_app() -> Flask:
             "brand":        request.args.get("brand", "").strip(),
             "model":        request.args.get("model", "").strip(),
             "city":         request.args.get("city", "").strip(),
+            "source":       request.args.get("source", "").strip(),
             "origin_city":  request.args.get("origin_city", "Darregueira").strip(),
             "min_year":     request.args.get("min_year", type=int),
             "max_year":     request.args.get("max_year", type=int),
@@ -105,6 +119,7 @@ def create_app() -> Flask:
             "min_score":    request.args.get("min_score", type=int),
             "max_distance": request.args.get("max_distance", type=int),
             "new_today":    bool(request.args.get("new_today")),
+            "since":        request.args.get("since", "").strip(),  # today/week/month/older
         }
 
     def _filters_for_template(f):
