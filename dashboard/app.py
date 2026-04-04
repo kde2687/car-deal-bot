@@ -267,32 +267,33 @@ def create_app() -> Flask:
                     return
                 # Test multiple endpoints to find what works
                 test_urls = {
-                    "search_with_q": (
+                    "search_with_auth": (
                         "https://api.mercadolibre.com/sites/MLA/search"
                         "?category=MLA1744&condition=used&q=toyota&limit=1"
                     ),
-                    "search_no_q": (
+                    "search_no_auth": (
                         "https://api.mercadolibre.com/sites/MLA/search"
-                        "?category=MLA1744&condition=used&limit=1"
+                        "?category=MLA1744&condition=used&q=toyota&limit=1"
                     ),
-                    "category_info": "https://api.mercadolibre.com/categories/MLA1744",
-                    "item_detail": "https://api.mercadolibre.com/items/MLA3059861990",
+                    "item_with_auth": "https://api.mercadolibre.com/items/MLA2710424838",
+                    "item_no_auth": "https://api.mercadolibre.com/items/MLA2710424838",
                 }
                 result["endpoint_tests"] = {}
                 for name, url in test_urls.items():
-                    r = await client.get(url, headers=headers, timeout=10.0)
-                    info = {"status": r.status_code}
+                    use_auth = not name.endswith("_no_auth")
+                    r = await client.get(url, headers=headers if use_auth else {}, timeout=10.0)
+                    info = {"status": r.status_code, "auth_sent": use_auth}
                     if r.status_code == 200:
                         d = r.json()
                         info["total"] = d.get("paging", {}).get("total")
-                        info["name"] = d.get("name")
+                        info["title"] = d.get("title")
                     else:
                         try:
                             info["error"] = r.json().get("message") or r.json().get("error")
                         except Exception:
                             pass
                     result["endpoint_tests"][name] = info
-                search_ok = result["endpoint_tests"].get("search_with_q", {}).get("status") == 200
+                search_ok = result["endpoint_tests"].get("search_with_auth", {}).get("status") == 200
                 result["mode"] = "API_OAUTH2_WORKS" if search_ok else "API_AUTH_OK_BUT_SEARCH_FORBIDDEN"
 
         try:
