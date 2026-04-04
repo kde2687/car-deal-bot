@@ -111,16 +111,6 @@
             </a>
           </li>
           <li class="nav-item">
-            <a class="nav-link {{ 'active' if view == 'all' else '' }}" href="/all">
-              <i class="bi bi-list-ul me-1"></i>All Listings
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link {{ 'active' if view == 'hidden' else '' }}" href="/hidden">
-              <i class="bi bi-eye-slash me-1"></i>Ocultos
-            </a>
-          </li>
-          <li class="nav-item">
             <a class="nav-link" href="/api/deals" target="_blank">
               <i class="bi bi-code-slash me-1"></i>API
             </a>
@@ -302,9 +292,6 @@
       <div class="text-muted small">
         Mostrando <strong>{{ listings | length }}</strong> de <strong>{{ total }}</strong> resultados
       </div>
-      <button id="toggleHidden" class="btn btn-outline-secondary btn-sm" onclick="toggleHiddenCards()">
-        <i class="bi bi-eye me-1"></i>Mostrar ocultos
-      </button>
     </div>
 
     <!-- Card Grid -->
