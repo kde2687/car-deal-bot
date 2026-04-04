@@ -263,7 +263,6 @@ async def main():
             "interval",
             hours=4,
             id="market_refresh",
-            next_run_time=None,
         )
         scheduler.add_job(
             run_db_backup,
@@ -276,7 +275,6 @@ async def main():
             "interval",
             hours=24,
             id="pricing_model_train",
-            next_run_time=None,
         )
         # Email digests — Argentina UTC-3: 6am=9UTC, 12pm=15UTC, 21hs=0UTC
         for digest_id, utc_hour in [("digest_6am", 9), ("digest_12pm", 15), ("digest_21hs", 0)]:

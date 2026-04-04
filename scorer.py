@@ -115,8 +115,9 @@ def _confidence_index(ref_type: str, n: int, prices: list[float]) -> int:
     # Market homogeneity via QCD
     if prices and len(prices) >= 4:
         sp = sorted(prices)
-        q1 = sp[len(sp) // 4]
-        q3 = sp[3 * len(sp) // 4]
+        n = len(sp)
+        q1 = sp[max(0, (n - 1) // 4)]
+        q3 = sp[min(n - 1, 3 * (n - 1) // 4)]
         qcd = (q3 - q1) / (q3 + q1) if (q3 + q1) > 0 else 0.5
     elif prices and len(prices) >= 2:
         mean = sum(prices) / len(prices)

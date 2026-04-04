@@ -102,6 +102,8 @@ class KavakScraper:
             if price_ars is not None:
                 if price_ars < config.MIN_PRICE_ARS or price_ars > config.MAX_PRICE_ARS:
                     return None
+                if year and price_ars < config.min_price_for_year(year):
+                    return None
 
             title = f"{brand} {model} {year or ''}".strip()
             url = f"https://www.kavak.com/ar/usados/{car_id}"

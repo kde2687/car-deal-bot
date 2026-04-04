@@ -213,6 +213,7 @@ class MercadoLibreScraper:
         # Pre-filters applied at API level — each 1000-result cap contains only relevant listings
         api_attr_filters = (
             f"&VEHICLE_YEAR-from={self.min_year}"
+            f"&KILOMETERS-from={config.MIN_KM}"
             f"&KILOMETERS-to={self.max_km}"
         )
 
