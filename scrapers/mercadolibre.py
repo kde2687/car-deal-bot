@@ -271,11 +271,14 @@ class MercadoLibreScraper:
                     break
 
                 results = data.get("results", [])
-                if not results:
-                    break
-
                 paging = data.get("paging", {})
                 total = paging.get("total", 0)
+
+                if offset == 0:
+                    logger.info(f"ML API [{brand_name}]: {total} total results in API")
+
+                if not results:
+                    break
 
                 for item in results:
                     # Detect agencies via API seller data — mark them, don't skip.
@@ -304,7 +307,9 @@ class MercadoLibreScraper:
             if brand_count:
                 logger.info(f"ML API {brand_name}: {brand_count} listings")
 
-        logger.info(f"ML API total: {len(listings)} listings")
+        agencies = sum(1 for l in listings if l.get("is_agency"))
+        private = len(listings) - agencies
+        logger.info(f"ML API total: {len(listings)} listings ({private} private, {agencies} agencies)")
         return listings
 
     # ------------------------------------------------------------------

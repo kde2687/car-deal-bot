@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 
 ML_API = "https://api.mercadolibre.com"
 ML_CARS_CATEGORY = "MLA1743"   # Autos y Camionetas — Argentina
-DEALER_THRESHOLD = 2           # sellers with >2 active car listings = dealer
-DEALER_COMPLETED_THRESHOLD = 50   # >50 completed sales = almost certainly a dealer
-DEALER_ACCOUNT_AGE_YEARS = 5      # account older than 5 years + high sales = dealer
+DEALER_THRESHOLD = 5           # sellers with >5 active car listings = dealer
+DEALER_COMPLETED_THRESHOLD = 30   # >30 completed car sales = professional dealer
+DEALER_ACCOUNT_AGE_YEARS = 3      # account older than 3 years + high sales = dealer
 CONCURRENCY = 8                # parallel API requests
 
 
