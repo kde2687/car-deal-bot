@@ -140,6 +140,7 @@ def create_app() -> Flask:
                 Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
+                (Listing.discount_pct == None) | (Listing.discount_pct >= 0),
             )
             query = _apply_filters(query, **f)
             query = query.order_by(Listing.score.desc())
@@ -229,6 +230,21 @@ def create_app() -> Flask:
             if listing:
                 listing.hidden = True
                 listing.is_deal = False
+                session.commit()
+            return ("", 204)
+        finally:
+            session.close()
+
+    @app.route("/mark_agency/<path:listing_id>", methods=["POST"])
+    def mark_agency(listing_id):
+        """Manually flag a listing as an agency — removes from deals permanently."""
+        session = SessionLocal()
+        try:
+            listing = session.query(Listing).filter_by(id=listing_id).first()
+            if listing:
+                listing.is_agency = True
+                listing.is_deal = False
+                listing.deal_reason = "Marcado manualmente como agencia"
                 session.commit()
             return ("", 204)
         finally:

@@ -29,8 +29,18 @@ logger = logging.getLogger(__name__)
 ML_API = "https://api.mercadolibre.com"
 ML_CARS_CATEGORY = "MLA1743"   # Autos y Camionetas — Argentina
 DEALER_THRESHOLD = 5           # sellers with >5 active car listings = dealer
-DEALER_COMPLETED_THRESHOLD = 30   # >30 completed car sales = professional dealer
-DEALER_ACCOUNT_AGE_YEARS = 3      # account older than 3 years + high sales = dealer
+DEALER_COMPLETED_THRESHOLD = 20   # >20 completed car sales = professional dealer
+DEALER_ACCOUNT_AGE_YEARS = 2      # account older than 2 years + high sales = dealer
+
+# Keywords in seller nickname that indicate a dealership
+_DEALER_NICKNAME_KEYWORDS = (
+    "automotor", "automotores", "automotriz", "automoviles", "automóviles",
+    "concesion", "concesionaria", "concesionario",
+    "agencia", "agencias", "dealer", "dealers",
+    "usados", "vehiculos", "vehículos", "cocheria", "cochería",
+    "multimarca", "s.a.", "srl", "s.r.l", "sa.",
+    "motors", "autos", "cars", "import",
+)
 CONCURRENCY = 8                # parallel API requests
 
 
@@ -58,6 +68,23 @@ async def _check_seller(
         if data.get("official_store_id") is not None:
             return seller_id, f"tienda oficial ML (store_id={data['official_store_id']})"
 
+        # Signal 1b: item-level tags (car_dealer, brand, etc.)
+        item_tags = data.get("tags") or []
+        if "car_dealer" in item_tags or "brand" in item_tags:
+            return seller_id, f"item tag: {[t for t in item_tags if t in ('car_dealer','brand')]}"
+
+        # Signal 1c: description text contains dealer keywords
+        resp_desc = await client.get(
+            f"{ML_API}/items/{mla_id}/descriptions", headers=auth, timeout=15.0
+        )
+        if resp_desc.status_code == 200:
+            descs = resp_desc.json()
+            if isinstance(descs, list):
+                for desc in descs:
+                    text = (desc.get("plain_text") or desc.get("text") or "").lower()
+                    if any(kw in text for kw in ("concesionaria", "concesionario", "datos de la concesion", "agencia de autos")):
+                        return seller_id, "descripción menciona concesionaria"
+
         # Signal 2: count active car listings
         resp2 = await client.get(
             f"{ML_API}/users/{seller_id}/items/search",
@@ -75,6 +102,24 @@ async def _check_seller(
         resp3 = await client.get(f"{ML_API}/users/{seller_id}", headers=auth, timeout=15.0)
         if resp3.status_code == 200:
             udata = resp3.json()
+
+            # Signal 3a: seller has a company profile (business account)
+            if udata.get("company"):
+                return seller_id, f"cuenta empresa ML"
+
+            # Signal 3b: seller tags include dealer indicators
+            seller_tags = udata.get("tags") or []
+            dealer_tags = [t for t in seller_tags if "dealer" in t.lower() or "car" in t.lower()]
+            if dealer_tags:
+                return seller_id, f"seller tags: {dealer_tags}"
+
+            # Signal 3c: nickname contains dealer keywords
+            nickname = (udata.get("nickname") or "").lower()
+            matched_kw = next((kw for kw in _DEALER_NICKNAME_KEYWORDS if kw in nickname), None)
+            if matched_kw:
+                return seller_id, f"nickname contiene '{matched_kw}'"
+
+            # Signal 3d: high transaction count + old account
             completed = (
                 udata.get("seller_reputation", {})
                 .get("transactions", {})
@@ -96,7 +141,7 @@ async def _check_seller(
                 and account_age_years >= DEALER_ACCOUNT_AGE_YEARS
             ):
                 return seller_id, (
-                    f"vendedor profesional: {completed} ventas completadas, "
+                    f"vendedor profesional: {completed} ventas, "
                     f"{account_age_years:.0f} años en ML"
                 )
 

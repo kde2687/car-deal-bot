@@ -433,19 +433,16 @@
               <a href="{{ listing.url }}" target="_blank" class="btn btn-primary btn-sm py-0 px-2">
                 Ver
               </a>
-              {% if view == 'hidden' %}
-              <button class="btn btn-outline-success btn-sm py-0 px-2"
-                      onclick="unhideCard('{{ listing.id }}', this)"
-                      title="Restaurar">
-                <i class="bi bi-eye"></i>
-              </button>
-              {% else %}
               <button class="btn btn-outline-danger btn-sm py-0 px-2"
                       onclick="hideCard('{{ listing.id }}', this)"
                       title="Ocultar">
                 <i class="bi bi-eye-slash"></i>
               </button>
-              {% endif %}
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+                      onclick="markAgency('{{ listing.id }}', this)"
+                      title="Marcar como agencia">
+                <i class="bi bi-building"></i>
+              </button>
             </div>
           </div>
         </div>
@@ -547,6 +544,22 @@
           wrap.style.opacity = '0';
           setTimeout(() => { wrap.style.display = 'none'; }, 300);
         }
+      });
+    }
+
+    function markAgency(listingId, btn) {
+      fetch('/mark_agency/' + listingId, { method: 'POST' }).then(() => {
+        const allWraps = document.querySelectorAll('[data-listing-id]');
+        allWraps.forEach(wrap => {
+          if (wrap.dataset.listingId === listingId) {
+            const card = wrap.querySelector('.deal-card');
+            if (card) {
+              card.style.opacity = '0';
+              card.style.transform = 'scale(0.95)';
+              setTimeout(() => { wrap.style.display = 'none'; }, 350);
+            }
+          }
+        });
       });
     }
 
