@@ -265,21 +265,35 @@ def create_app() -> Flask:
                 if not headers:
                     result["mode"] = "HTML_FALLBACK (no API credentials)"
                     return
-                # Test one search query
-                url = (
-                    "https://api.mercadolibre.com/sites/MLA/search"
-                    "?category=MLA1744&condition=used&sort=date_desc"
-                    "&VEHICLE_YEAR-from=2018&VEHICLE_YEAR-to=2020"
-                    "&q=toyota&limit=1"
-                )
-                resp = await client.get(url, headers=headers, timeout=10.0)
-                result["test_query_status"] = resp.status_code
-                if resp.status_code == 200:
-                    data = resp.json()
-                    result["test_query_total"] = data.get("paging", {}).get("total", 0)
-                    result["mode"] = "API_OAUTH2_WORKS"
-                elif resp.status_code in (401, 403):
-                    result["mode"] = "API_AUTH_OK_BUT_SEARCH_FORBIDDEN — will use HTML fallback"
+                # Test multiple endpoints to find what works
+                test_urls = {
+                    "search_with_q": (
+                        "https://api.mercadolibre.com/sites/MLA/search"
+                        "?category=MLA1744&condition=used&q=toyota&limit=1"
+                    ),
+                    "search_no_q": (
+                        "https://api.mercadolibre.com/sites/MLA/search"
+                        "?category=MLA1744&condition=used&limit=1"
+                    ),
+                    "category_info": "https://api.mercadolibre.com/categories/MLA1744",
+                    "item_detail": "https://api.mercadolibre.com/items/MLA3059861990",
+                }
+                result["endpoint_tests"] = {}
+                for name, url in test_urls.items():
+                    r = await client.get(url, headers=headers, timeout=10.0)
+                    info = {"status": r.status_code}
+                    if r.status_code == 200:
+                        d = r.json()
+                        info["total"] = d.get("paging", {}).get("total")
+                        info["name"] = d.get("name")
+                    else:
+                        try:
+                            info["error"] = r.json().get("message") or r.json().get("error")
+                        except Exception:
+                            pass
+                    result["endpoint_tests"][name] = info
+                search_ok = result["endpoint_tests"].get("search_with_q", {}).get("status") == 200
+                result["mode"] = "API_OAUTH2_WORKS" if search_ok else "API_AUTH_OK_BUT_SEARCH_FORBIDDEN"
 
         try:
             asyncio.run(_run())
