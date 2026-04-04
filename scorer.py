@@ -258,7 +258,7 @@ def calculate_market_reference(
                     continue
 
             nm = _normalize_model(row_model or "")
-            if base_model not in nm and nm not in base_model:
+            if nm != base_model:
                 continue
 
             usd = price_usd_equiv if price_usd_equiv and price_usd_equiv > 0 \
@@ -361,7 +361,7 @@ def _depreciation_curve_estimate(
         if exclude_id and lid == exclude_id:
             continue
         nm = _normalize_model(row_model or "")
-        if base_model not in nm and nm not in base_model:
+        if nm != base_model:
             continue
         age = _current_year() - (car_year or 0)
         if age < 0 or age > 25:

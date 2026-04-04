@@ -77,9 +77,10 @@ class MLTokenManager:
         self._lock = asyncio.Lock()
         self._loaded_from_db = False
 
-    def _ensure_loaded(self):
+    async def _ensure_loaded(self):
         if not self._loaded_from_db:
-            self._refresh_token = _load_refresh_token()
+            loop = asyncio.get_event_loop()
+            self._refresh_token = await loop.run_in_executor(None, _load_refresh_token)
             self._loaded_from_db = True
 
     def set_tokens(self, access_token: str, refresh_token: str, expires_in: int = 21600):
@@ -97,7 +98,7 @@ class MLTokenManager:
             return None
 
         async with self._lock:
-            self._ensure_loaded()
+            await self._ensure_loaded()
 
             if self._token and time.time() < self._expires_at - _REFRESH_BUFFER:
                 return self._token

@@ -265,6 +265,17 @@
             </select>
           </div>
 
+          <div class="col-12 col-md-2">
+            <label class="form-label small text-muted mb-1">Ordenar por</label>
+            <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value="score_desc" {% if filters.sort == 'score_desc' %}selected{% endif %}>Score</option>
+              <option value="discount_desc" {% if filters.sort == 'discount_desc' %}selected{% endif %}>Mayor descuento</option>
+              <option value="price_asc" {% if filters.sort == 'price_asc' %}selected{% endif %}>Menor precio</option>
+              <option value="price_desc" {% if filters.sort == 'price_desc' %}selected{% endif %}>Mayor precio</option>
+              <option value="newest" {% if filters.sort == 'newest' %}selected{% endif %}>Más recientes</option>
+            </select>
+          </div>
+
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1">
               Score ≥ <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>

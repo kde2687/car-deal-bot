@@ -74,11 +74,19 @@ async def run_scan(telegram_alerter=None):
             logger.error(f"{name} scraper failed: {e}")
             return [], time.time() - t
 
-    (ml_listings, t_ml), (ac_listings, t_ac), (kavak_listings, t_kavak) = await asyncio.gather(
-        safe_scrape("MercadoLibre", ml_scraper),
-        safe_scrape("Autocosmos", ac_scraper),
-        safe_scrape("Kavak", kv_scraper),
-    )
+    try:
+        (ml_listings, t_ml), (ac_listings, t_ac), (kavak_listings, t_kavak) = await asyncio.wait_for(
+            asyncio.gather(
+                safe_scrape("MercadoLibre", ml_scraper),
+                safe_scrape("Autocosmos", ac_scraper),
+                safe_scrape("Kavak", kv_scraper),
+            ),
+            timeout=420.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Scrape phase exceeded 420s timeout — using empty results")
+        ml_listings, ac_listings, kavak_listings = [], [], []
+        t_ml = t_ac = t_kavak = 0.0
 
     all_listings = ml_listings + ac_listings + kavak_listings
     logger.info(f"Fetched {len(ml_listings)} ML + {len(ac_listings)} Autocosmos + {len(kavak_listings)} Kavak = {len(all_listings)} total")

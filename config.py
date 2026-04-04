@@ -53,6 +53,7 @@ MIN_KM  = int(os.getenv("MIN_KM", "500"))      # Mínimo km — descarta 0km/nue
 BRANDS = os.getenv("BRANDS", "Toyota,Ford,Volkswagen,Chevrolet,Renault,Peugeot,Fiat,Citroen,Nissan,Honda,Hyundai,Kia,Jeep,Dodge,Mitsubishi,Suzuki")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///deals.db")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "changeme")
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 BRANDS_LIST = [b.strip() for b in BRANDS.split(",") if b.strip()]

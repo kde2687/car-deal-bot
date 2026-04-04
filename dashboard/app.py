@@ -48,6 +48,17 @@ def create_app() -> Flask:
     app.jinja_env.filters["format_price"] = format_price
     app.jinja_env.filters["time_ago"] = time_ago
 
+    import os as _os
+    _ADMIN_TOKEN = _os.getenv("ADMIN_TOKEN", "")
+
+    def _check_admin():
+        if not _ADMIN_TOKEN:
+            return None  # not configured = allow (dev mode)
+        token = request.args.get("token") or request.headers.get("X-Admin-Token", "")
+        if token != _ADMIN_TOKEN:
+            return jsonify({"error": "unauthorized"}), 401
+        return None
+
     def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None):
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
@@ -123,6 +134,7 @@ def create_app() -> Flask:
             "new_today":       bool(request.args.get("new_today")),
             "since":           request.args.get("since", "").strip(),
             "min_price_drops": request.args.get("min_price_drops", type=int),
+            "sort":            request.args.get("sort", "score_desc"),
         }
 
     def _filters_for_template(f):
@@ -143,7 +155,17 @@ def create_app() -> Flask:
                 Listing.discount_pct >= 0,
             )
             query = _apply_filters(query, **f)
-            query = query.order_by(Listing.score.desc())
+            sort = f.get("sort", "score_desc")
+            if sort == "discount_desc":
+                query = query.order_by(Listing.discount_pct.desc().nullslast())
+            elif sort == "price_asc":
+                query = query.order_by(Listing.price_ars.asc().nullslast())
+            elif sort == "price_desc":
+                query = query.order_by(Listing.price_ars.desc())
+            elif sort == "newest":
+                query = query.order_by(Listing.first_seen.desc())
+            else:
+                query = query.order_by(Listing.score.desc())
 
             all_rows = query.all()
             all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
@@ -189,7 +211,17 @@ def create_app() -> Flask:
                 Listing.discount_pct >= 0,
             )
             query = _apply_filters(query, **f)
-            query = query.order_by(Listing.score.desc())
+            sort = f.get("sort", "score_desc")
+            if sort == "discount_desc":
+                query = query.order_by(Listing.discount_pct.desc().nullslast())
+            elif sort == "price_asc":
+                query = query.order_by(Listing.price_ars.asc().nullslast())
+            elif sort == "price_desc":
+                query = query.order_by(Listing.price_ars.desc())
+            elif sort == "newest":
+                query = query.order_by(Listing.first_seen.desc())
+            else:
+                query = query.order_by(Listing.score.desc())
 
             all_rows = query.all()
             all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
@@ -254,6 +286,8 @@ def create_app() -> Flask:
     @app.route("/admin/ml_login")
     def ml_login():
         """Redirect to ML OAuth2 authorization page (authorization_code flow)."""
+        err = _check_admin()
+        if err: return err
         from ml_auth import get_authorization_url
         url = get_authorization_url()
         return (
@@ -266,6 +300,8 @@ def create_app() -> Flask:
     @app.route("/admin/ml_callback")
     def ml_callback():
         """Handle ML OAuth2 callback — exchange code for tokens."""
+        err = _check_admin()
+        if err: return err
         import asyncio, httpx, config as cfg
         code = request.args.get("code")
         if not code:
@@ -316,6 +352,8 @@ def create_app() -> Flask:
     @app.route("/admin/ml_token_refresh", methods=["POST"])
     def ml_token_refresh():
         """Force ML OAuth token refresh to pick up new app permissions."""
+        err = _check_admin()
+        if err: return err
         import asyncio, httpx
         from ml_auth import _manager
         result = {}
@@ -337,6 +375,8 @@ def create_app() -> Flask:
     @app.route("/admin/ml_debug")
     def ml_debug():
         """Diagnose ML scraper: test auth, run one sample query, show config."""
+        err = _check_admin()
+        if err: return err
         import asyncio, httpx, config as cfg
         result = {"ml_app_id_set": bool(cfg.ML_APP_ID), "ml_secret_set": bool(cfg.ML_CLIENT_SECRET)}
 
@@ -390,6 +430,8 @@ def create_app() -> Flask:
     @app.route("/admin/fix_overpriced", methods=["POST"])
     def fix_overpriced():
         """Clear is_deal flag for any listing with negative discount_pct."""
+        err = _check_admin()
+        if err: return err
         session = SessionLocal()
         try:
             updated = (
