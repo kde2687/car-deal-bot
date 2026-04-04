@@ -4,7 +4,7 @@ Falls back to HTML scraping if API credentials are not configured.
 
 API advantages over HTML scraping:
 - No cookies needed (tokens auto-refresh every 6h)
-- seller_type=private filters dealers at the source
+- dealers fetched too (is_agency flag set) — they serve as price comparables
 - Structured JSON data — no brittle HTML parsing
 - 18,000 requests/hour with auth (vs very low without)
 """
@@ -113,6 +113,8 @@ class MercadoLibreScraper:
             elif currency == "USD":
                 if not price_usd or price_usd < config.MIN_PRICE_USD or price_usd > config.MAX_PRICE_USD:
                     return None
+            else:
+                return None  # unknown currency — skip
 
             # Attributes: year, km, fuel, transmission
             year = None

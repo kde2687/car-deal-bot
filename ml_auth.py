@@ -80,7 +80,11 @@ class MLTokenManager:
     async def _ensure_loaded(self):
         if not self._loaded_from_db:
             loop = asyncio.get_event_loop()
-            self._refresh_token = await loop.run_in_executor(None, _load_refresh_token)
+            try:
+                self._refresh_token = await loop.run_in_executor(None, _load_refresh_token)
+            except Exception as e:
+                logger.warning(f"Failed to load refresh token from DB: {e}")
+                self._refresh_token = None
             self._loaded_from_db = True
 
     def set_tokens(self, access_token: str, refresh_token: str, expires_in: int = 21600):
@@ -131,16 +135,28 @@ class MLTokenManager:
             data = resp.json()
             self._token = data["access_token"]
             self._expires_at = time.time() + data.get("expires_in", 21600)
-            # ML rotates refresh_tokens — save the new one
+            # ML rotates refresh_tokens — persist BEFORE updating memory so a
+            # save failure leaves the in-memory state unchanged.
             new_rt = data.get("refresh_token")
             if new_rt and new_rt != self._refresh_token:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _save_refresh_token, new_rt)
                 self._refresh_token = new_rt
-                _save_refresh_token(new_rt)
             logger.info("ML access_token refreshed via refresh_token")
             return True
+        except httpx.HTTPStatusError as e:
+            # 401/403 = token is invalid; clear it so we fall back to client_credentials
+            if e.response.status_code in (401, 403):
+                logger.warning(f"ML refresh_token rejected ({e.response.status_code}) — clearing")
+                self._refresh_token = None
+                self._token = None
+            else:
+                logger.warning(f"ML refresh_token flow HTTP error: {e}")
+                self._token = None
+            return False
         except Exception as e:
-            logger.warning(f"ML refresh_token flow failed: {e} — clearing stored token")
-            self._refresh_token = None
+            # Transient error (network, timeout) — keep refresh_token, just clear access_token
+            logger.warning(f"ML refresh_token flow failed: {e}")
             self._token = None
             return False
 

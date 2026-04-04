@@ -449,6 +449,20 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    @app.route("/admin/scan", methods=["POST"])
+    def trigger_scan():
+        """Trigger an immediate scan in a background thread."""
+        err = _check_admin()
+        if err: return err
+        import threading
+        def _run():
+            import asyncio
+            from main import run_scan
+            asyncio.run(run_scan())
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return jsonify({"status": "scan started"})
+
     @app.route("/unhide/<path:listing_id>", methods=["POST"])
     def unhide_listing(listing_id):
         session = SessionLocal()
