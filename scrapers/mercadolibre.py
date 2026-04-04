@@ -62,19 +62,13 @@ def _load_cookies() -> dict:
 
 
 # HTML scraper constants (fallback when no API credentials)
-PAGES_PER_BRAND = 5          # 5 pages × 48 cards = 240 listings max per brand
+PAGES_PER_BRAND = 6          # 6 pages × 48 cards = 288 listings max per brand
 HTML_CONCURRENCY = 4         # concurrent brand fetches
-HTML_PAGE_DELAY  = 1.2       # seconds between pages within one brand
-REGIONAL_CITY_SLUGS: list[str] = [
-    # Near Darregueira (<250km)
-    "bahia-blanca", "santa-rosa", "tandil", "olavarria",
-    "trenque-lauquen", "nueve-de-julio",
-    # Major cities (for comparables)
-    "mar-del-plata", "la-plata", "rosario", "cordoba",
-    "mendoza", "neuquen",
-]
-REGIONAL_PAGES = 1
-CATEGORY_PAGES = 6
+HTML_PAGE_DELAY  = 1.0       # seconds between pages within one brand
+# Regional pages disabled — they 12× the request count and push past the 420s timeout
+REGIONAL_CITY_SLUGS: list[str] = []
+REGIONAL_PAGES = 0
+CATEGORY_PAGES = 8
 
 
 class MercadoLibreScraper:
@@ -496,18 +490,18 @@ class MercadoLibreScraper:
             logger.debug(f"Error parsing ML card: {e}")
             return None
 
-    async def _fetch_page(self, client: httpx.AsyncClient, url: str, retries: int = 3) -> Optional[str]:
-        delay = 2.0
+    async def _fetch_page(self, client: httpx.AsyncClient, url: str, retries: int = 2) -> Optional[str]:
+        delay = 1.5
         for attempt in range(retries):
             try:
-                resp = await client.get(url, timeout=30.0)
+                resp = await client.get(url, timeout=15.0)
                 if resp.status_code == 429:
                     wait = min(delay * (2 ** attempt), 60.0)
                     logger.warning(f"ML rate limited, waiting {wait:.0f}s")
                     await asyncio.sleep(wait)
                     continue
-                if resp.status_code == 404:
-                    return None
+                if resp.status_code in (403, 404):
+                    return None  # don't retry blocks or missing pages
                 resp.raise_for_status()
                 return resp.text
             except httpx.HTTPStatusError as e:
