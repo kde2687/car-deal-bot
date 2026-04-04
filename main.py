@@ -346,7 +346,7 @@ if __name__ == "__main__":
             os.kill(_old_pid, 0)   # signal 0 = existence check only
             print(f"Another instance (PID {_old_pid}) is already running. Exiting.")
             sys.exit(1)
-        except (ProcessLookupError, ValueError):
+        except (ProcessLookupError, ValueError, PermissionError, OSError):
             pass   # stale PID file — safe to overwrite
 
     with open(_PID_FILE, "w") as _pf:

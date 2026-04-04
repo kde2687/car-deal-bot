@@ -449,16 +449,29 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    _scan_running = False
+
     @app.route("/admin/scan", methods=["POST"])
     def trigger_scan():
         """Trigger an immediate scan in a background thread."""
         err = _check_admin()
         if err: return err
+        nonlocal _scan_running
+        if _scan_running:
+            return jsonify({"status": "already running"}), 409
         import threading
         def _run():
-            import asyncio
-            from main import run_scan
-            asyncio.run(run_scan())
+            nonlocal _scan_running
+            _scan_running = True
+            try:
+                import asyncio
+                from main import run_scan
+                asyncio.run(run_scan())
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Manual scan failed: {e}", exc_info=True)
+            finally:
+                _scan_running = False
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         return jsonify({"status": "scan started"})
