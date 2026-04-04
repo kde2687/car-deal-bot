@@ -69,7 +69,7 @@ async def run_scan(telegram_alerter=None):
         t = time.time()
         try:
             result = await scraper.fetch_listings()
-            return result, time.time() - t
+            return result or [], time.time() - t
         except Exception as e:
             logger.error(f"{name} scraper failed: {e}")
             return [], time.time() - t
