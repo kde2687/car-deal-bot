@@ -251,6 +251,42 @@ def create_app() -> Flask:
         finally:
             session.close()
 
+    @app.route("/admin/ml_debug")
+    def ml_debug():
+        """Diagnose ML scraper: test auth, run one sample query, show config."""
+        import asyncio, httpx, config as cfg
+        result = {"ml_app_id_set": bool(cfg.ML_APP_ID), "ml_secret_set": bool(cfg.ML_CLIENT_SECRET)}
+
+        async def _run():
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                from ml_auth import get_auth_headers
+                headers = await get_auth_headers(client)
+                result["auth_ok"] = bool(headers)
+                if not headers:
+                    result["mode"] = "HTML_FALLBACK (no API credentials)"
+                    return
+                result["mode"] = "API_OAUTH2"
+                # Test one query
+                url = (
+                    "https://api.mercadolibre.com/sites/MLA/search"
+                    "?category=MLA1744&condition=used&sort=date_desc"
+                    "&VEHICLE_YEAR-from=2018&VEHICLE_YEAR-to=2020"
+                    "&q=toyota&limit=1"
+                )
+                resp = await client.get(url, headers=headers, timeout=10.0)
+                result["test_query_status"] = resp.status_code
+                if resp.status_code == 200:
+                    data = resp.json()
+                    result["test_query_total"] = data.get("paging", {}).get("total", 0)
+
+        try:
+            asyncio.run(_run())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_run())
+            loop.close()
+        return jsonify(result)
+
     @app.route("/admin/fix_overpriced", methods=["POST"])
     def fix_overpriced():
         """Clear is_deal flag for any listing with negative discount_pct."""
