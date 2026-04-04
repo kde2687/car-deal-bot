@@ -48,7 +48,7 @@ def create_app() -> Flask:
     app.jinja_env.filters["format_price"] = format_price
     app.jinja_env.filters["time_ago"] = time_ago
 
-    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since=""):
+    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None):
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
         if model:
@@ -79,6 +79,8 @@ def create_app() -> Flask:
                 query = query.filter(Listing.first_seen >= now - timedelta(days=30))
             elif since == "older":
                 query = query.filter(Listing.first_seen < now - timedelta(days=30))
+        if min_price_drops is not None:
+            query = query.filter(Listing.price_changes_count >= min_price_drops)
         # Distance filter: SQL fast-path only when using the default origin (Darregueira)
         origin_lower = (origin_city or "").lower().strip()
         using_default_origin = not origin_lower or "darregueira" in origin_lower
@@ -118,8 +120,9 @@ def create_app() -> Flask:
             "max_km":       request.args.get("max_km", type=int),
             "min_score":    request.args.get("min_score", type=int),
             "max_distance": request.args.get("max_distance", type=int),
-            "new_today":    bool(request.args.get("new_today")),
-            "since":        request.args.get("since", "").strip(),  # today/week/month/older
+            "new_today":       bool(request.args.get("new_today")),
+            "since":           request.args.get("since", "").strip(),
+            "min_price_drops": request.args.get("min_price_drops", type=int),
         }
 
     def _filters_for_template(f):

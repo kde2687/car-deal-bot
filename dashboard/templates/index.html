@@ -276,6 +276,17 @@
             </select>
           </div>
 
+          <!-- 5d. Bajas de precio -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-arrow-down-circle me-1"></i>Bajas de precio</label>
+            <select name="min_price_drops" class="form-select form-select-sm">
+              <option value="">Cualquiera</option>
+              <option value="1" {{ 'selected' if filters.min_price_drops|string == '1' else '' }}>≥ 1 baja</option>
+              <option value="2" {{ 'selected' if filters.min_price_drops|string == '2' else '' }}>≥ 2 bajas</option>
+              <option value="3" {{ 'selected' if filters.min_price_drops|string == '3' else '' }}>≥ 3 bajas</option>
+            </select>
+          </div>
+
           <!-- 6. Score mín -->
           <div class="col-6 col-md-1">
             <label class="form-label small fw-semibold mb-1">
