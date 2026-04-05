@@ -174,7 +174,17 @@
       <div class="card-body">
         <form method="GET" action="{{ '/' if view == 'deals' else '/all' }}" class="row g-2 align-items-end">
 
-          <!-- ── ROW 1 (12 cols): Marca(2) Modelo(2) Ciudad(2) MiCiudad(2) Dist(1) AñoMin(1) AñoMax(1) KMmax(1) ── -->
+          <!-- ── ROW 1 (12 cols): Tipo(2) Marca(2) Modelo(2) Ciudad(2) MiCiudad(1) Dist(1) AñoMin(1) AñoMax(1) KMmax ── -->
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-grid-1x2 me-1"></i>Tipo</label>
+            <select name="vehicle_type" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value=""    {{ 'selected' if not filters.vehicle_type }}>Todos</option>
+              <option value="auto"   {{ 'selected' if filters.vehicle_type == 'auto' }}>🚗 Autos</option>
+              <option value="pickup" {{ 'selected' if filters.vehicle_type == 'pickup' }}>🛻 Pick-ups</option>
+              <option value="moto"   {{ 'selected' if filters.vehicle_type == 'moto' }}>🏍️ Motos</option>
+            </select>
+          </div>
+
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-car-front me-1"></i>Marca</label>
             <select name="brand" class="form-select form-select-sm" id="brandSelect">
@@ -201,7 +211,7 @@
             </datalist>
           </div>
 
-          <div class="col-6 col-md-2">
+          <div class="col-6 col-md-1">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-house-fill me-1"></i>Mi ciudad</label>
             <input type="text" name="origin_city" class="form-control form-control-sm"
                    value="{{ filters.origin_city or 'Darregueira' }}"

@@ -59,7 +59,35 @@ def create_app() -> Flask:
             return jsonify({"error": "unauthorized"}), 401
         return None
 
-    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None, sort=None):
+    # Pickup keywords matched against model + title for vehicle_type filter
+    _PICKUP_KEYWORDS = [
+        "hilux", "ranger", "amarok", "frontier", "s10", "montana",
+        "saveiro", "triton", "l200", "strada", "toro", "tacoma",
+        "f-150", "f150", "ram 1500", "ram1500", "colorado", "canyon",
+        "ridgeline", "pickup", "pick-up", "pick up",
+        "doble cabina", "cabina doble", "cabina simple",
+    ]
+
+    def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None, sort=None, vehicle_type=None):
+        from sqlalchemy import or_, and_
+        if vehicle_type == "pickup":
+            pickup_conds = [
+                Listing.model.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+            ] + [
+                Listing.title.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+            ]
+            query = query.filter(or_(*pickup_conds))
+        elif vehicle_type == "auto":
+            # Exclude pickups: model AND title don't match any pickup keyword
+            not_pickup_conds = [
+                ~Listing.model.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+            ] + [
+                ~Listing.title.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+            ]
+            query = query.filter(and_(*not_pickup_conds))
+        elif vehicle_type == "moto":
+            # No motorcycles scraped yet — return nothing
+            query = query.filter(Listing.id == None)
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
         if model:
@@ -133,8 +161,9 @@ def create_app() -> Flask:
             "max_distance": request.args.get("max_distance", type=int),
             "new_today":       bool(request.args.get("new_today")),
             "since":           request.args.get("since", "").strip(),
-            "min_price_drops": request.args.get("min_price_drops", type=int),
-            "sort":            request.args.get("sort", "score_desc"),
+            "min_price_drops":  request.args.get("min_price_drops", type=int),
+            "sort":             request.args.get("sort", "score_desc"),
+            "vehicle_type":     request.args.get("vehicle_type", "").strip(),
         }
 
     def _filters_for_template(f):
