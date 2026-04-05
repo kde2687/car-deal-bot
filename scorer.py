@@ -295,14 +295,14 @@ def calculate_market_reference(
                          median_usd, usd_rate, len(prices))
         return median_usd, median_ars, len(prices), "exact", _pct(prices), _confidence_index("exact", len(prices), prices)
 
-    # Pass 1: exact year ±1, km filtered
+    # Pass 1: ±1 year, km filtered — less precise than same-year, label accordingly
     prices, weights = _fetch(year_exact, km_filter=True)
     if len(prices) >= MIN_SAMPLE_SIZE:
         median_usd = _weighted_median(prices, weights)
         median_ars = median_usd * usd_rate
         _save_market_ref(session, brand, model, year, median_ars,
                          median_usd, usd_rate, len(prices))
-        return median_usd, median_ars, len(prices), "exact", _pct(prices), _confidence_index("exact", len(prices), prices)
+        return median_usd, median_ars, len(prices), "exact_nokm", _pct(prices), _confidence_index("exact_nokm", len(prices), prices)
 
     # Pass 2: exact year ±1, no km filter
     prices, weights = _fetch(year_exact, km_filter=False)
@@ -550,7 +550,7 @@ def score_listing(session, listing_dict: dict) -> dict:
     ref_labels = {
         "exact":         f"{sample_count} muestras, km similar",
         "exact_nokm":    f"{sample_count} muestras",
-        "broad":         f"ref. amplia ±3 años, {sample_count} muestras",
+        "broad":         f"ref. amplia ±2 años, {sample_count} muestras",
         "curve":         f"curva depreciación, {sample_count} muestras",
         "brand_fallback":f"ref. marca similar, {sample_count} muestras",
         "ml_model":      "modelo ML hedónico",
@@ -809,6 +809,9 @@ def _normalize_seller(name: str) -> str:
 
 
 def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
+    from config import get_usd_mep_rate as _get_usd_mep_rate
+    _usd_rate = _get_usd_mep_rate()   # fetch once per scan — used to pre-fill price_usd_equiv
+
     session = SessionLocal()
     new_count = 0
     deal_count = 0
@@ -853,6 +856,7 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                 if existing:
                     if existing.hidden or existing.is_agency:
                         existing.last_seen = now
+                        existing.is_deal = False   # clear stale deal flag so unhide shows current market state
                         session.commit()
                         continue
 
@@ -906,6 +910,15 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                             f"Blocked seller '{raw_seller}' — skipping {listing_id}"
                         )
 
+                    # Pre-compute price_usd_equiv so this listing is immediately
+                    # findable as a comparable when score_listing() runs after flush().
+                    # Without this, USD-only listings (price_ars=NULL) cannot be
+                    # found via (price_ars > 0) | (price_usd_equiv > 0) filter.
+                    _p_usd = listing_dict.get("price_usd") or 0
+                    _p_ars = listing_dict.get("price_ars") or 0
+                    _init_usd_equiv = (_p_usd if _p_usd > 0
+                                       else (_p_ars / _usd_rate if _p_ars > 0 and _usd_rate else None))
+
                     listing_obj = Listing(
                         id=listing_id,
                         source=listing_dict.get("source", ""),
@@ -916,6 +929,7 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         km=listing_dict.get("km"),
                         price_ars=listing_dict.get("price_ars"),
                         price_usd=listing_dict.get("price_usd"),
+                        price_usd_equiv=_init_usd_equiv,
                         fuel=listing_dict.get("fuel", ""),
                         transmission=listing_dict.get("transmission", ""),
                         condition=listing_dict.get("condition", "used"),

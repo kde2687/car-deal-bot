@@ -62,13 +62,14 @@ def _load_cookies() -> dict:
 
 
 # HTML scraper constants (fallback when no API credentials)
-PAGES_PER_BRAND = 6          # 6 pages × 48 cards = 288 listings max per brand
+PAGES_PER_BRAND = 12         # 12 pages × 48 cards = 576 listings max per brand (matches Autocosmos)
 HTML_CONCURRENCY = 4         # concurrent brand fetches
-HTML_PAGE_DELAY  = 1.0       # seconds between pages within one brand
-# Regional pages disabled — they 12× the request count and push past the 420s timeout
-REGIONAL_CITY_SLUGS: list[str] = []
-REGIONAL_PAGES = 0
-CATEGORY_PAGES = 8
+HTML_PAGE_DELAY  = 0.5       # seconds between pages within one brand (halved — scans complete in ~70s)
+# Regional pages: 2 pages per major city to capture province-level inventory
+# Actual scans complete in ~70s vs 420s budget — plenty of headroom for regional pass
+REGIONAL_CITY_SLUGS: list[str] = ["buenos-aires", "cordoba", "rosario", "mendoza"]
+REGIONAL_PAGES = 2
+CATEGORY_PAGES = 20          # increased from 8 — captures more non-brand listings
 
 
 class MercadoLibreScraper:

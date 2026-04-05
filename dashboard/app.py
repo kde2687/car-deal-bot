@@ -149,7 +149,11 @@ def create_app() -> Flask:
         origin_lower = (origin_city or "").lower().strip()
         using_default_origin = not origin_lower or "darregueira" in origin_lower
         if max_distance is not None and using_default_origin:
-            query = query.filter(Listing.distance_km <= max_distance)
+            # Include listings with NULL distance_km (no geocoding) so they aren't
+            # silently excluded — NULL <= X evaluates to NULL (falsy) in SQL.
+            query = query.filter(
+                (Listing.distance_km <= max_distance) | (Listing.distance_km.is_(None))
+            )
         return query
 
     def _apply_distance_filter(listings, origin_city, max_distance):
