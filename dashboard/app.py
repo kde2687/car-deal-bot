@@ -5,7 +5,7 @@ from flask import Flask, jsonify, render_template, request
 from sqlalchemy import func
 
 import config
-from database import SessionLocal, Listing
+from database import SessionLocal, Listing, BlockedSeller
 from geo import haversine_km, city_to_coords, ORIGIN_LAT, ORIGIN_LON, ORIGIN_NAME, CITY_COORDS
 
 
@@ -325,7 +325,11 @@ def create_app() -> Flask:
 
     @app.route("/mark_agency/<path:listing_id>", methods=["POST"])
     def mark_agency(listing_id):
-        """Manually flag a listing as an agency — removes from deals permanently."""
+        """
+        Manually flag a listing as an agency — removes from deals permanently.
+        Also adds the seller name to the BlockedSeller table so future listings
+        from the same seller are auto-flagged at scan time.
+        """
         session = SessionLocal()
         try:
             listing = session.query(Listing).filter_by(id=listing_id).first()
@@ -333,6 +337,28 @@ def create_app() -> Flask:
                 listing.is_agency = True
                 listing.is_deal = False
                 listing.deal_reason = "Marcado manualmente como agencia"
+
+                # Persist seller name to blocklist so future listings are caught automatically
+                raw_seller = ""
+                if isinstance(listing.raw_data, dict):
+                    raw_seller = (listing.raw_data.get("seller_name") or "").strip()
+                if raw_seller:
+                    normalised = " ".join(raw_seller.lower().split())
+                    # Ignore generic labels that are already caught by keyword detection
+                    _generic = {"concesionaria", "concesionario", "agencia", "dealer", "tienda oficial"}
+                    if normalised and normalised not in _generic:
+                        existing_block = session.query(BlockedSeller).filter_by(
+                            seller_name=normalised
+                        ).first()
+                        if not existing_block:
+                            session.add(BlockedSeller(
+                                seller_name=normalised,
+                                notes=f"flagged from listing {listing_id}",
+                            ))
+                            logger.info(
+                                f"Seller blocklisted: '{normalised}' (from {listing_id})"
+                            )
+
                 session.commit()
             return ("", 204)
         finally:

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
-from database import SessionLocal, Listing, MarketReference, SegmentVelocity
+from database import SessionLocal, Listing, MarketReference, SegmentVelocity, BlockedSeller
 from geo import coords_from_listing_dict, distance_from_darregueira, ORIGIN_NAME
 
 logger = logging.getLogger(__name__)
@@ -759,6 +759,11 @@ def _record_price_event(session, listing_obj, event_type: str, now: datetime):
     ))
 
 
+def _normalize_seller(name: str) -> str:
+    """Lowercase + collapse whitespace for consistent seller name matching."""
+    return " ".join(name.lower().split())
+
+
 def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
     session = SessionLocal()
     new_count = 0
@@ -768,6 +773,17 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
     seen_ids: set[str] = set()   # track all IDs processed this scan
 
     skipped_distance = 0
+
+    # Load blocked seller names once per scan (O(1) lookup per listing)
+    blocked_sellers: set[str] = set()
+    try:
+        blocked_sellers = {
+            row.seller_name for row in session.query(BlockedSeller.seller_name).all()
+        }
+        if blocked_sellers:
+            logger.debug(f"Loaded {len(blocked_sellers)} blocked sellers")
+    except Exception as e:
+        logger.warning(f"Could not load blocked sellers: {e}")
 
     try:
         for listing_dict in listings_dicts:
@@ -836,6 +852,16 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                     listing_obj = existing
                     updated_count += 1
                 else:
+                    # Check seller name against blocklist before saving
+                    raw_seller = _normalize_seller(
+                        (listing_dict.get("raw_data") or {}).get("seller_name", "")
+                    )
+                    seller_blocked = bool(raw_seller and raw_seller in blocked_sellers)
+                    if seller_blocked:
+                        logger.info(
+                            f"Blocked seller '{raw_seller}' — skipping {listing_id}"
+                        )
+
                     listing_obj = Listing(
                         id=listing_id,
                         source=listing_dict.get("source", ""),
@@ -860,11 +886,14 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         last_seen=now,
                         status="active",
                         price_changes_count=0,
-                        is_agency=bool(listing_dict.get("is_agency", False)),
+                        is_agency=bool(listing_dict.get("is_agency", False)) or seller_blocked,
                     )
+                    if seller_blocked:
+                        listing_obj.is_deal = False
+                        listing_obj.deal_reason = f"Vendedor bloqueado: {raw_seller}"
                     session.add(listing_obj)
                     new_count += 1
-                    if listing_dict.get("source") == "mercadolibre":
+                    if listing_dict.get("source") == "mercadolibre" and not seller_blocked:
                         new_ml_ids.append(listing_id)
 
                 session.flush()

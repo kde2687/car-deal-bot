@@ -246,27 +246,27 @@
             </select>
           </div>
 
-          <!-- ── ROW 2: Año mín | Año máx | KM máx | Dist. | Publicado | Bajas ── -->
-          <div class="col-3 col-md-2">
+          <!-- ── ROW 2: Año mín | Año máx | KM máx | Dist | Publicado | Bajas | Ordenar | Botones ── -->
+          <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1">Año mín</label>
             <input type="number" name="min_year" class="form-control form-control-sm"
                    placeholder="2015" value="{{ filters.min_year }}" min="1990" max="2030" />
           </div>
 
-          <div class="col-3 col-md-2">
+          <div class="col-3 col-md-1">
             <label class="form-label small fw-semibold mb-1">Año máx</label>
             <input type="number" name="max_year" class="form-control form-control-sm"
                    placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
           </div>
 
-          <div class="col-6 col-md-2">
+          <div class="col-6 col-md-1">
             <label class="form-label small fw-semibold mb-1">KM máx</label>
             <input type="number" name="max_km" class="form-control form-control-sm"
-                   placeholder="150 000" value="{{ filters.max_km }}" min="0" step="10000" />
+                   placeholder="150k" value="{{ filters.max_km }}" min="0" step="10000" />
           </div>
 
-          <div class="col-6 col-md-2">
-            <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. máx (km)</label>
+          <div class="col-6 col-md-1">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. km</label>
             <input type="number" name="max_distance" class="form-control form-control-sm"
                    placeholder="500" value="{{ filters.max_distance }}" min="0" step="50" />
           </div>
@@ -292,8 +292,7 @@
             </select>
           </div>
 
-          <!-- ── ROW 3: Ordenar | Score | Botones ── -->
-          <div class="col-12 col-md-4">
+          <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1">Ordenar por</label>
             <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="score_desc"    {% if filters.sort == 'score_desc' %}selected{% endif %}>Score ↓</option>
@@ -304,16 +303,7 @@
             </select>
           </div>
 
-          <div class="col-12 col-md-4">
-            <label class="form-label small fw-semibold mb-1">
-              Score mín: <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>
-            </label>
-            <input type="range" name="min_score" class="form-range"
-                   min="0" max="100" value="{{ filters.min_score if filters.min_score != '' else '0' }}"
-                   oninput="document.getElementById('scoreVal').textContent = this.value" />
-          </div>
-
-          <div class="col-12 col-md-4 d-flex align-items-end gap-2">
+          <div class="col-6 col-md-2 d-flex align-items-end gap-2">
             <button type="submit" class="btn btn-primary btn-sm flex-grow-1">
               <i class="bi bi-funnel-fill me-1"></i>Filtrar
             </button>

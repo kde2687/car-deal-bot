@@ -480,6 +480,14 @@ class MercadoLibreScraper:
             loc_el = li_el.select_one(".poly-component__location, [class*=location], [class*=city]")
             location_text = loc_el.get_text(strip=True) if loc_el else ""
             city = location_text.split(" - ")[0].strip() if location_text else ""
+
+            # Capture seller display name — present on dealer/agency cards, absent on private
+            seller_el = li_el.select_one(
+                ".poly-component__seller, [class*=seller-info], [class*=seller__], "
+                "[class*=seller-name], [data-testid*=seller]"
+            )
+            seller_name = seller_el.get_text(strip=True) if seller_el else ""
+
             model = title
             brand_lower = brand.lower()
             if model.lower().startswith(brand_lower):
@@ -502,8 +510,12 @@ class MercadoLibreScraper:
                 "url": href.split("#")[0],
                 "thumbnail": thumbnail,
                 "seller_city": city,
-                "raw_data": {"title": title, "price_ars": price_ars, "price_usd": price_usd,
-                             "currency": currency, "year": year, "km": km, "location": location_text, "url": href},
+                "raw_data": {
+                    "title": title, "price_ars": price_ars, "price_usd": price_usd,
+                    "currency": currency, "year": year, "km": km,
+                    "location": location_text, "url": href,
+                    "seller_name": seller_name,
+                },
             }
         except Exception as e:
             logger.debug(f"Error parsing ML card: {e}")

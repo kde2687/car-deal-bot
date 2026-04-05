@@ -153,5 +153,18 @@ class ModelArtifact(Base):
     updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class BlockedSeller(Base):
+    """
+    Seller names/nicknames manually flagged as agencies via the dashboard.
+    Loaded at scan start and used to auto-flag new listings from the same seller.
+    """
+    __tablename__ = "blocked_sellers"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    seller_name = Column(String, nullable=False, unique=True)   # normalised lowercase
+    added_at    = Column(DateTime, default=datetime.utcnow)
+    notes       = Column(String, nullable=True)   # e.g. listing ID that triggered the block
+
+
 def init_db():
     Base.metadata.create_all(engine)
