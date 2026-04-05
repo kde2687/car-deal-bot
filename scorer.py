@@ -562,11 +562,32 @@ def score_listing(session, listing_dict: dict) -> dict:
     ref_note    = f" ({ref_labels.get(ref_type, str(sample_count))})"
     ref_penalty = ref_penalties.get(ref_type, 0)
 
+    # Segment velocity boost: fast-selling segments deserve higher urgency scores.
+    # This is purely a score modifier — it does NOT lower the is_deal threshold.
+    velocity_boost = 0.0
+    velocity_note  = ""
+    try:
+        base_model_v = _normalize_model(model)
+        sv = session.query(SegmentVelocity).filter_by(
+            brand=brand, model=base_model_v, year=year
+        ).first()
+        if sv and sv.sample_count >= 2:
+            med = sv.median_days_to_sale
+            if med is not None:
+                if med <= 7:
+                    velocity_boost = 3.0
+                    velocity_note  = f" Segmento caliente ({med:.0f}d mediana de venta)."
+                elif med <= 14:
+                    velocity_boost = 1.5
+                    velocity_note  = f" Segmento activo ({med:.0f}d mediana de venta)."
+    except Exception:
+        pass  # SegmentVelocity table may not exist yet on fresh deploys
+
     # Confidence multiplier: full confidence at 5+ samples (was 10 — too aggressive
     # for a young dataset where most models have 3-5 comparables)
     confidence  = min(1.0, math.sqrt(sample_count / 5.0)) if sample_count > 0 else 1.0
 
-    raw_score   = max(0.0, min(100.0, base_score + km_mod + age_mod + ref_penalty))
+    raw_score   = max(0.0, min(100.0, base_score + km_mod + age_mod + ref_penalty + velocity_boost))
     final_score = max(0.0, min(100.0, raw_score * confidence))
 
     # is_deal: based purely on discount_pct relative to reference quality.
@@ -606,7 +627,7 @@ def score_listing(session, listing_dict: dict) -> dict:
     deal_reason = (
         f"{year} {brand} {_normalize_model(model).title()} — "
         f"precio: {asking_label} vs mediana mercado: {market_label}{ref_note} "
-        f"({discount_str}). {km_str}.{motivated_note} Score: {final_score:.0f}/100"
+        f"({discount_str}). {km_str}.{motivated_note}{velocity_note} Score: {final_score:.0f}/100"
     )
 
     return {
