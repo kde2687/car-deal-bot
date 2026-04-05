@@ -6,18 +6,21 @@ Uses the public ML API to detect dealers via multiple signals:
   2. active listing count — seller with >DEALER_THRESHOLD active car listings
   3. seller_reputation  — high transaction count + old account → likely dealer
 
-ML API (no auth required):
+ML API (authenticated):
   GET https://api.mercadolibre.com/items/{MLA_ID}
-      → {seller_id, official_store_id, tags, ...}
+      → {seller_id, official_store_id, tags, original_price, sale_price, ...}
+  GET https://api.mercadolibre.com/items/{MLA_ID}/prices
+      → {prices: [{type: "reference", amount: N, currency_id: "ARS"}, ...]}
+      ← This is the same market median ML shows on the listing's bell-curve graph.
   GET https://api.mercadolibre.com/users/{seller_id}/items/search?limit=1&category=MLA1743
-      → {paging: {total: N}}   (MLA1743 = Autos y Camionetas, Argentina)
+      → {paging: {total: N}}
   GET https://api.mercadolibre.com/users/{seller_id}
       → {registration_date, seller_reputation: {transactions: {completed: N}}}
 
-Price reference enrichment (HTML scraping — works from Railway):
-  Fetches https://auto.mercadolibre.com.ar/{MLA_ID} and extracts ML's own
-  "precio de referencia" from the embedded __NEXT_DATA__ JSON.
-  Listings priced above ML's median reference are de-flagged as deals.
+Price reference enrichment (API-based — no HTML scraping needed):
+  _get_ml_ref_price() is called inside _check_seller() using the already-fetched
+  item data + one extra /prices call. Listings priced above ML's median reference
+  are de-flagged as deals.
 """
 import asyncio
 import json
@@ -76,13 +79,72 @@ def _get_proxy() -> Optional[str]:
         return None
 
 
+async def _get_ml_ref_price(
+    client: httpx.AsyncClient,
+    mla_id: str,
+    item_data: dict,
+    auth: dict,
+) -> Optional[float]:
+    """
+    Extract ML's own market reference price (the bell-curve median shown on listing pages).
+
+    Tries in order:
+      1. GET /items/{id}/prices  →  entry with type="reference" and currency_id="ARS"
+         This is the same number ML displays in its price-distribution widget.
+      2. item_data["original_price"]  — ML's "before discount" price when seller set one.
+      3. sale_price.regular_amount vs sale_price.amount difference.
+      4. Recursive key search through item_data for known reference field names.
+
+    Returns ARS float or None if unavailable.
+    """
+    # Strategy 1: /prices endpoint — "reference" type is ML's market median
+    try:
+        resp = await client.get(
+            f"{ML_API}/items/{mla_id}/prices", headers=auth, timeout=10.0
+        )
+        if resp.status_code == 200:
+            for entry in (resp.json().get("prices") or []):
+                if entry.get("type") == "reference" and entry.get("currency_id") == "ARS":
+                    amt = entry.get("amount")
+                    if isinstance(amt, (int, float)) and 1_000_000 <= amt <= 2_000_000_000:
+                        logger.debug(f"ML ref price {mla_id}: ${amt:,.0f} ARS (from /prices)")
+                        return float(amt)
+    except Exception:
+        pass
+
+    # Strategy 2: original_price field (set when seller marks a "before" price)
+    op = item_data.get("original_price")
+    if isinstance(op, (int, float)) and 1_000_000 <= op <= 2_000_000_000:
+        logger.debug(f"ML ref price {mla_id}: ${op:,.0f} ARS (from original_price)")
+        return float(op)
+
+    # Strategy 3: sale_price.regular_amount when it differs from current amount
+    sp = item_data.get("sale_price") or {}
+    regular = sp.get("regular_amount")
+    current = sp.get("amount") or item_data.get("price")
+    if (
+        isinstance(regular, (int, float))
+        and isinstance(current, (int, float))
+        and regular > current
+        and 1_000_000 <= regular <= 2_000_000_000
+    ):
+        logger.debug(f"ML ref price {mla_id}: ${regular:,.0f} ARS (from sale_price.regular_amount)")
+        return float(regular)
+
+    # Strategy 4: recursive search for known reference field names in item data
+    found = _extract_ref_price_from_obj(item_data)
+    if found:
+        logger.debug(f"ML ref price {mla_id}: ${found:,.0f} ARS (from recursive key scan)")
+    return found
+
+
 async def _check_seller(
     client: httpx.AsyncClient, mla_id: str
-) -> tuple[Optional[int], Optional[str]]:
+) -> tuple[Optional[int], Optional[str], Optional[float]]:
     """
-    Return (seller_id, reason) if seller is a dealer, else (None, None).
-    reason is a human-readable string explaining why they were flagged.
-    Returns (None, None) if not a dealer or on any API error.
+    Return (seller_id, reason, ref_price_ars) — seller_id/reason are None if not a dealer.
+    ref_price_ars is ML's market median for this listing (None if unavailable).
+    Returns (None, None, None) on any API error.
     """
     try:
         auth = await get_auth_headers(client)
@@ -90,20 +152,23 @@ async def _check_seller(
         # Step 1: get item data
         resp = await client.get(f"{ML_API}/items/{mla_id}", headers=auth, timeout=15.0)
         if resp.status_code != 200:
-            return None, None
+            return None, None, None
         data = resp.json()
         seller_id = data.get("seller_id")
         if not seller_id:
-            return None, None
+            return None, None, None
+
+        # Extract ML's market reference price now (reuses item data, +1 /prices call)
+        ref_price = await _get_ml_ref_price(client, mla_id, data, auth)
 
         # Signal 1: official store (always an agency)
         if data.get("official_store_id") is not None:
-            return seller_id, f"tienda oficial ML (store_id={data['official_store_id']})"
+            return seller_id, f"tienda oficial ML (store_id={data['official_store_id']})", ref_price
 
         # Signal 1b: item-level tags (car_dealer, brand, etc.)
         item_tags = data.get("tags") or []
         if "car_dealer" in item_tags or "brand" in item_tags:
-            return seller_id, f"item tag: {[t for t in item_tags if t in ('car_dealer','brand')]}"
+            return seller_id, f"item tag: {[t for t in item_tags if t in ('car_dealer','brand')]}", ref_price
 
         # Signal 1c: description text contains dealer keywords
         resp_desc = await client.get(
@@ -115,7 +180,7 @@ async def _check_seller(
                 for desc in descs:
                     text = (desc.get("plain_text") or desc.get("text") or "").lower()
                     if any(kw in text for kw in ("concesionaria", "concesionario", "datos de la concesion", "agencia de autos")):
-                        return seller_id, "descripción menciona concesionaria"
+                        return seller_id, "descripción menciona concesionaria", ref_price
 
         # Signal 2: count active car listings
         resp2 = await client.get(
@@ -128,7 +193,7 @@ async def _check_seller(
         if resp2.status_code == 200:
             listing_count = resp2.json().get("paging", {}).get("total", 0)
             if listing_count > DEALER_THRESHOLD:
-                return seller_id, f"{listing_count} autos en venta activos"
+                return seller_id, f"{listing_count} autos en venta activos", ref_price
 
         # Signal 3: seller reputation — high completed transactions + old account
         resp3 = await client.get(f"{ML_API}/users/{seller_id}", headers=auth, timeout=15.0)
@@ -137,19 +202,19 @@ async def _check_seller(
 
             # Signal 3a: seller has a company profile (business account)
             if udata.get("company"):
-                return seller_id, f"cuenta empresa ML"
+                return seller_id, "cuenta empresa ML", ref_price
 
             # Signal 3b: seller tags include dealer indicators
             seller_tags = udata.get("tags") or []
             dealer_tags = [t for t in seller_tags if "dealer" in t.lower() or "car" in t.lower()]
             if dealer_tags:
-                return seller_id, f"seller tags: {dealer_tags}"
+                return seller_id, f"seller tags: {dealer_tags}", ref_price
 
             # Signal 3c: nickname contains dealer keywords
             nickname = (udata.get("nickname") or "").lower()
             matched_kw = next((kw for kw in _DEALER_NICKNAME_KEYWORDS if kw in nickname), None)
             if matched_kw:
-                return seller_id, f"nickname contiene '{matched_kw}'"
+                return seller_id, f"nickname contiene '{matched_kw}'", ref_price
 
             # Signal 3d: high transaction count + old account
             completed = (
@@ -175,13 +240,13 @@ async def _check_seller(
                 return seller_id, (
                     f"vendedor profesional: {completed} ventas, "
                     f"{account_age_years:.0f} años en ML"
-                )
+                ), ref_price
 
-        return None, None
+        return None, None, ref_price
 
     except Exception as e:
         logger.debug(f"ML API error for {mla_id}: {e}")
-        return None, None
+        return None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -394,53 +459,79 @@ async def enrich_ml_new_listings(listing_ids: list[str]) -> int:
         return 0
 
     sem = asyncio.Semaphore(CONCURRENCY)
-    agencies_found: list[tuple[str, int, str]] = []  # (lid, seller_id, reason)
+    agencies_found: list[tuple[str, int, str]] = []        # (lid, seller_id, reason)
+    ref_prices_found: list[tuple[str, float]] = []         # (lid, ref_price_ars)
 
     async def check_one(lid: str, mla_id: str):
         async with sem:
-            seller_id, reason = await _check_seller(api_client, mla_id)
+            seller_id, reason, ref_price = await _check_seller(api_client, mla_id)
             if seller_id is not None and reason:
                 agencies_found.append((lid, seller_id, reason))
                 logger.debug(
                     f"ML enrich: {mla_id} seller {seller_id} → dealer ({reason})"
                 )
+            if ref_price is not None:
+                ref_prices_found.append((lid, ref_price))
+                logger.debug(f"ML enrich: {mla_id} ref price ${ref_price/1e6:.1f}M ARS")
             await asyncio.sleep(0.2)
 
     async with httpx.AsyncClient(follow_redirects=True) as api_client:
         await asyncio.gather(*[check_one(lid, mla_id) for lid, mla_id in pairs])
 
-    if agencies_found:
-        session = SessionLocal()
-        try:
-            for lid, seller_id, reason in agencies_found:
-                listing = session.query(Listing).filter_by(id=lid).first()
-                if listing and not listing.is_agency:
-                    listing.is_agency = True
+    agency_lids: set[str] = set()
+    session = SessionLocal()
+    try:
+        # Phase 1: mark agencies
+        for lid, seller_id, reason in agencies_found:
+            listing = session.query(Listing).filter_by(id=lid).first()
+            if listing and not listing.is_agency:
+                listing.is_agency = True
+                listing.is_deal = False
+                listing.deal_reason = (
+                    f"Filtrado: agencia ML (vendedor {seller_id} — {reason})"
+                )
+                agency_lids.add(lid)
+                logger.info(f"ML enrich: {lid} → agencia (seller {seller_id}, {reason})")
+
+        # Phase 2: apply ML's reference prices (API-based — no HTML scraping needed)
+        ref_updated = 0
+        ref_deflags = 0
+        for lid, ref_price in ref_prices_found:
+            if lid in agency_lids:
+                continue   # already handled as agency
+            listing = session.query(Listing).filter_by(id=lid).first()
+            if not listing or listing.hidden:
+                continue
+
+            listing.market_price_ars = ref_price   # always update with ML's data
+
+            # De-flag if listing price is above ML's market median (with 2% tolerance)
+            listing_price = listing.price_ars or 0
+            if listing_price > 0 and listing_price > ref_price * 1.02:
+                pct_above = (listing_price - ref_price) / ref_price * 100
+                if listing.is_deal:
                     listing.is_deal = False
                     listing.deal_reason = (
-                        f"Filtrado: agencia ML (vendedor {seller_id} — {reason})"
+                        f"Sobre precio ML: ${listing_price/1e6:.1f}M > "
+                        f"ref ${ref_price/1e6:.1f}M (+{pct_above:.0f}%)"
                     )
+                    ref_deflags += 1
                     logger.info(
-                        f"ML enrich: {lid} → agencia (seller {seller_id}, {reason})"
+                        f"ML ref price: {lid} de-flagged — "
+                        f"${listing_price/1e6:.1f}M > ref ${ref_price/1e6:.1f}M (+{pct_above:.0f}%)"
                     )
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"ML enrich DB write failed: {e}")
-        finally:
-            session.close()
+            ref_updated += 1
 
-    logger.info(
-        f"ML enrich: checked {len(pairs)} listings, found {len(agencies_found)} agencies"
-    )
-
-    # --- Phase 2: reference price enrichment via HTML scraping ---
-    agency_lids = {lid for lid, _, _ in agencies_found}
-    # Only check listings not already flagged as agencies (no point enriching hidden listings)
-    ref_pairs = [(lid, mla_id) for lid, mla_id in pairs if lid not in agency_lids]
-
-    if ref_pairs:
-        await _enrich_reference_prices(ref_pairs)
+        session.commit()
+        logger.info(
+            f"ML enrich: {len(pairs)} checked | {len(agencies_found)} agencias | "
+            f"{ref_updated} ref prices applied | {ref_deflags} de-flagged as overpriced"
+        )
+    except Exception as e:
+        session.rollback()
+        logger.error(f"ML enrich DB write failed: {e}")
+    finally:
+        session.close()
 
     return len(agencies_found)
 

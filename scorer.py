@@ -505,6 +505,24 @@ def score_listing(session, listing_dict: dict) -> dict:
         listing_price_usd=price_usd_equiv,
     )
 
+    # Fallback: if our DB has no comparables, use ML's own reference price hint
+    # (captured from the search API's original_price / sale_price.regular_amount fields,
+    # or set by ml_enrich after the /items/{id}/prices API call).
+    if market_usd is None:
+        raw_data = listing_dict.get("raw_data") or {}
+        ml_hint_ars = raw_data.get("ml_ref_price_hint")
+        # Also check if the listing's market_price_ars was already set by ml_enrich
+        ml_market_ars = listing_dict.get("market_price_ars")
+        fallback_ars = ml_market_ars or ml_hint_ars
+        if fallback_ars and fallback_ars > 0:
+            fallback_usd = _ars_to_usd(fallback_ars, usd_rate)
+            market_usd = fallback_usd
+            market_ars = fallback_ars
+            sample_count = 0
+            ref_type = "ml_model"          # lowest-trust label — requires 8% discount
+            percentile_rank = None
+            confidence_index = 0
+
     if market_usd is None:
         return {
             "score": 0.0,

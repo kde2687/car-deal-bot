@@ -172,6 +172,17 @@ class MercadoLibreScraper:
             from scorer import _normalize_model as _nm
             model = _nm(model).title() if model else model
 
+            # Capture ML's original_price (before seller discount) and sale_price
+            # as early market reference signals before enrichment runs
+            original_price = item.get("original_price")
+            sale_price_obj = item.get("sale_price") or {}
+            ml_ref_price_hint = None
+            if isinstance(original_price, (int, float)) and original_price > 0:
+                ml_ref_price_hint = float(original_price)
+            elif (sale_price_obj.get("regular_amount") and sale_price_obj.get("amount")
+                  and sale_price_obj["regular_amount"] > sale_price_obj["amount"]):
+                ml_ref_price_hint = float(sale_price_obj["regular_amount"])
+
             return {
                 "id": f"meli:{item_id}",
                 "source": "mercadolibre",
@@ -197,6 +208,8 @@ class MercadoLibreScraper:
                     "km": km,
                     "location": city,
                     "url": permalink,
+                    "ml_original_price": original_price,
+                    "ml_ref_price_hint": ml_ref_price_hint,
                 },
             }
         except Exception as e:
