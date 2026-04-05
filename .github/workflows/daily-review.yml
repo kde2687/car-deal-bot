@@ -64,4 +64,5 @@ jobs:
           git diff --quiet && git diff --cached --quiet && echo "No changes." && exit 0
           git add -A
           git commit -m "auto: daily review $(date +%Y-%m-%d)"
+          git pull --rebase origin main
           git push origin main
