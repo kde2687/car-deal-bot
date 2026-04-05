@@ -59,13 +59,31 @@ def create_app() -> Flask:
             return jsonify({"error": "unauthorized"}), 401
         return None
 
-    # Pickup keywords matched against model + title for vehicle_type filter
+    # Keywords matched against model + title for vehicle_type filter
     _PICKUP_KEYWORDS = [
         "hilux", "ranger", "amarok", "frontier", "s10", "montana",
         "saveiro", "triton", "l200", "strada", "toro", "tacoma",
         "f-150", "f150", "ram 1500", "ram1500", "colorado", "canyon",
         "ridgeline", "pickup", "pick-up", "pick up",
         "doble cabina", "cabina doble", "cabina simple",
+    ]
+    _SUV_KEYWORDS = [
+        "sw4", "prado", "land cruiser", "landcruiser", "4runner",
+        "rav4", "fortuner",
+        "x-trail", "xtrail", "kicks", "qashqai", "murano", "pathfinder",
+        "tucson", "santa fe", "santafe", "ix35", "creta", "venue",
+        "sportage", "sorento", "seltos",
+        "duster", "koleos", "kadjar",
+        "tracker", "trailblazer", "captiva", "tahoe", "equinox",
+        "renegade", "compass", "grand cherokee", "grandcherokee", "wrangler",
+        "tiguan", "taos", "t-cross", "tcross", "t-roc", "troc",
+        "2008 ", "3008", "5008",
+        "c3 aircross", "c5 aircross",
+        "cr-v", "crv", "hr-v", "hrv",
+        "outlander", "asx", "eclipse cross",
+        "vitara", "s-cross", "jimny",
+        "territory", "ecosport", "bronco", "explorer", "edge",
+        "pilot", "passport",
     ]
 
     def _apply_filters(query, brand, model, city, source, origin_city, min_year, max_year, max_km, min_score, max_distance, new_today=False, since="", min_price_drops=None, sort=None, vehicle_type=None):
@@ -77,16 +95,23 @@ def create_app() -> Flask:
                 Listing.title.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
             ]
             query = query.filter(or_(*pickup_conds))
-        elif vehicle_type == "auto":
-            # Exclude pickups: model AND title don't match any pickup keyword
-            not_pickup_conds = [
-                ~Listing.model.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+        elif vehicle_type == "suv":
+            suv_conds = [
+                Listing.model.ilike(f"%{kw}%") for kw in _SUV_KEYWORDS
             ] + [
-                ~Listing.title.ilike(f"%{kw}%") for kw in _PICKUP_KEYWORDS
+                Listing.title.ilike(f"%{kw}%") for kw in _SUV_KEYWORDS
             ]
-            query = query.filter(and_(*not_pickup_conds))
+            query = query.filter(or_(*suv_conds))
+        elif vehicle_type == "auto":
+            # Exclude pickups and SUVs
+            exclude_kws = _PICKUP_KEYWORDS + _SUV_KEYWORDS
+            not_conds = [
+                ~Listing.model.ilike(f"%{kw}%") for kw in exclude_kws
+            ] + [
+                ~Listing.title.ilike(f"%{kw}%") for kw in exclude_kws
+            ]
+            query = query.filter(and_(*not_conds))
         elif vehicle_type == "moto":
-            # No motorcycles scraped yet — return nothing
             query = query.filter(Listing.id == None)
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))

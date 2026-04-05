@@ -127,42 +127,56 @@
   <div class="container-fluid px-4">
 
     <!-- Stats Row -->
-    <div class="row g-3 mb-4">
+    <div class="row g-2 mb-3">
       <div class="col-6 col-md-3">
-        <div class="card stat-card h-100">
-          <div class="card-body py-3">
-            <div class="text-muted small mb-1"><i class="bi bi-trophy me-1"></i>Total Deals</div>
-            <div class="fs-4 fw-bold text-primary">{{ total }}</div>
+        <div class="card stat-card">
+          <div class="card-body py-2 px-3 d-flex align-items-center gap-3">
+            <i class="bi bi-trophy text-primary fs-5"></i>
+            <div>
+              <div class="text-muted" style="font-size:.72rem">Total Deals</div>
+              <div class="fw-bold text-primary lh-1" style="font-size:1.15rem">{{ total }}</div>
+            </div>
           </div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <a href="{% if filters.new_today %}?{% else %}?new_today=1{% endif %}" class="text-decoration-none">
-          <div class="card stat-card h-100" style="border-left-color: #198754;{% if filters.new_today %} background:#f0fff4; border:2px solid #198754!important;{% endif %}">
-            <div class="card-body py-3">
-              <div class="text-muted small mb-1"><i class="bi bi-calendar-check me-1"></i>New Today {% if filters.new_today %}<span class="badge bg-success ms-1">✓</span>{% endif %}</div>
-              <div class="fs-4 fw-bold text-success">{{ new_today }}</div>
+          <div class="card stat-card{% if filters.new_today %} border-success{% endif %}" style="border-left-color:#198754">
+            <div class="card-body py-2 px-3 d-flex align-items-center gap-3">
+              <i class="bi bi-calendar-check text-success fs-5"></i>
+              <div>
+                <div class="text-muted" style="font-size:.72rem">Nuevos hoy {% if filters.new_today %}<span class="badge bg-success" style="font-size:.6rem">✓</span>{% endif %}</div>
+                <div class="fw-bold text-success lh-1" style="font-size:1.15rem">{{ new_today }}</div>
+              </div>
             </div>
           </div>
         </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card stat-card h-100" style="border-left-color: #ffc107;">
-          <div class="card-body py-3">
-            <div class="text-muted small mb-1"><i class="bi bi-bar-chart me-1"></i>Avg Score</div>
-            <div class="fs-4 fw-bold text-warning">{{ avg_score }}</div>
+        <div class="card stat-card" style="border-left-color:#ffc107">
+          <div class="card-body py-2 px-3 d-flex align-items-center gap-3">
+            <i class="bi bi-bar-chart text-warning fs-5"></i>
+            <div>
+              <div class="text-muted" style="font-size:.72rem">Score promedio</div>
+              <div class="fw-bold text-warning lh-1" style="font-size:1.15rem">{{ avg_score }}</div>
+            </div>
           </div>
         </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card stat-card h-100" style="border-left-color: #6c757d;">
-          <div class="card-body py-3">
-            <div class="text-muted small mb-1"><i class="bi bi-clock me-1"></i>Last Scan</div>
-            <div class="fs-5 fw-semibold text-secondary mb-2">
-              {% if last_updated %}{{ last_updated | time_ago }}{% else %}—{% endif %}
+        <div class="card stat-card" style="border-left-color:#6c757d">
+          <div class="card-body py-2 px-3 d-flex align-items-center justify-content-between gap-2">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-clock text-secondary fs-5"></i>
+              <div>
+                <div class="text-muted" style="font-size:.72rem">Último scan</div>
+                <div class="fw-semibold text-secondary lh-1" style="font-size:.85rem">
+                  {% if last_updated %}{{ last_updated | time_ago }}{% else %}—{% endif %}
+                </div>
+              </div>
             </div>
-            <button id="scanBtn" onclick="triggerScan()" class="btn btn-outline-secondary btn-sm w-100">
-              <i class="bi bi-arrow-clockwise me-1"></i>Actualizar ahora
+            <button id="scanBtn" onclick="triggerScan()" class="btn btn-outline-secondary btn-sm flex-shrink-0" style="font-size:.75rem;padding:.2rem .5rem">
+              <i class="bi bi-arrow-clockwise"></i>
             </button>
           </div>
         </div>
@@ -170,16 +184,17 @@
     </div>
 
     <!-- Filter Bar -->
-    <div class="card filter-card mb-4">
-      <div class="card-body">
+    <div class="card filter-card mb-3">
+      <div class="card-body py-2 px-3">
         <form method="GET" action="{{ '/' if view == 'deals' else '/all' }}" class="row g-2 align-items-end">
 
-          <!-- ── ROW 1 (12 cols): Tipo(2) Marca(2) Modelo(2) Ciudad(2) MiCiudad(1) Dist(1) AñoMin(1) AñoMax(1) KMmax ── -->
+          <!-- ── ROW 1: Tipo | Marca | Modelo | Ciudad | Mi ciudad | Fuente ── -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-grid-1x2 me-1"></i>Tipo</label>
             <select name="vehicle_type" class="form-select form-select-sm" onchange="this.form.submit()">
-              <option value=""    {{ 'selected' if not filters.vehicle_type }}>Todos</option>
+              <option value=""       {{ 'selected' if not filters.vehicle_type }}>Todos</option>
               <option value="auto"   {{ 'selected' if filters.vehicle_type == 'auto' }}>🚗 Autos</option>
+              <option value="suv"    {{ 'selected' if filters.vehicle_type == 'suv' }}>🚙 SUVs</option>
               <option value="pickup" {{ 'selected' if filters.vehicle_type == 'pickup' }}>🛻 Pick-ups</option>
               <option value="moto"   {{ 'selected' if filters.vehicle_type == 'moto' }}>🏍️ Motos</option>
             </select>
@@ -202,7 +217,7 @@
           </div>
 
           <div class="col-6 col-md-2">
-            <label class="form-label small fw-semibold mb-1"><i class="bi bi-pin-map me-1"></i>Ciudad del vehículo</label>
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-pin-map me-1"></i>Ciudad</label>
             <input type="text" name="city" class="form-control form-control-sm"
                    placeholder="ej: Rosario, CABA…" value="{{ filters.city }}"
                    list="cityList" autocomplete="off" />
@@ -211,7 +226,7 @@
             </datalist>
           </div>
 
-          <div class="col-6 col-md-1">
+          <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-house-fill me-1"></i>Mi ciudad</label>
             <input type="text" name="origin_city" class="form-control form-control-sm"
                    value="{{ filters.origin_city or 'Darregueira' }}"
@@ -221,32 +236,6 @@
             </datalist>
           </div>
 
-          <div class="col-3 col-md-1">
-            <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. máx</label>
-            <input type="number" name="max_distance" class="form-control form-control-sm"
-                   placeholder="km" value="{{ filters.max_distance }}" min="0" step="50" />
-          </div>
-
-          <div class="col-3 col-md-1">
-            <label class="form-label small fw-semibold mb-1">Año mín</label>
-            <input type="number" name="min_year" class="form-control form-control-sm"
-                   placeholder="2015" value="{{ filters.min_year }}" min="1990" max="2030" />
-          </div>
-
-          <div class="col-3 col-md-1">
-            <label class="form-label small fw-semibold mb-1">Año máx</label>
-            <input type="number" name="max_year" class="form-control form-control-sm"
-                   placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
-          </div>
-
-          <div class="col-3 col-md-1">
-            <label class="form-label small fw-semibold mb-1">KM máx</label>
-            <input type="number" name="max_km" class="form-control form-control-sm"
-                   placeholder="150k" value="{{ filters.max_km }}" min="0" step="10000" />
-          </div>
-
-          <!-- ── ROW 2 (12 cols): offset(2) Fuente(2) Publicado(2) Bajas(2) Score(2) Botones(2) ── -->
-          <!-- offset-md-2 makes Fuente start under Modelo, Publicado under Ciudad, etc. -->
           <div class="col-6 col-md-2">
             <label class="form-label small fw-semibold mb-1"><i class="bi bi-database me-1"></i>Fuente</label>
             <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
@@ -255,6 +244,31 @@
               <option value="kavak"         {{ 'selected' if filters.source == 'kavak' else '' }}>Kavak</option>
               <option value="autocosmos"    {{ 'selected' if filters.source == 'autocosmos' else '' }}>Autocosmos</option>
             </select>
+          </div>
+
+          <!-- ── ROW 2: Año mín | Año máx | KM máx | Dist. | Publicado | Bajas ── -->
+          <div class="col-3 col-md-2">
+            <label class="form-label small fw-semibold mb-1">Año mín</label>
+            <input type="number" name="min_year" class="form-control form-control-sm"
+                   placeholder="2015" value="{{ filters.min_year }}" min="1990" max="2030" />
+          </div>
+
+          <div class="col-3 col-md-2">
+            <label class="form-label small fw-semibold mb-1">Año máx</label>
+            <input type="number" name="max_year" class="form-control form-control-sm"
+                   placeholder="2025" value="{{ filters.max_year }}" min="1990" max="2030" />
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1">KM máx</label>
+            <input type="number" name="max_km" class="form-control form-control-sm"
+                   placeholder="150 000" value="{{ filters.max_km }}" min="0" step="10000" />
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-geo-alt me-1"></i>Dist. máx (km)</label>
+            <input type="number" name="max_distance" class="form-control form-control-sm"
+                   placeholder="500" value="{{ filters.max_distance }}" min="0" step="50" />
           </div>
 
           <div class="col-6 col-md-2">
@@ -269,7 +283,7 @@
           </div>
 
           <div class="col-6 col-md-2">
-            <label class="form-label small fw-semibold mb-1"><i class="bi bi-arrow-down-circle me-1"></i>Bajas de precio</label>
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-arrow-down-circle me-1"></i>Bajas precio</label>
             <select name="min_price_drops" class="form-select form-select-sm" onchange="this.form.submit()">
               <option value="">Cualquiera</option>
               <option value="1" {{ 'selected' if filters.min_price_drops|string == '1' else '' }}>≥ 1 baja</option>
@@ -278,27 +292,28 @@
             </select>
           </div>
 
-          <div class="col-12 col-md-2">
-            <label class="form-label small text-muted mb-1">Ordenar por</label>
+          <!-- ── ROW 3: Ordenar | Score | Botones ── -->
+          <div class="col-12 col-md-4">
+            <label class="form-label small fw-semibold mb-1">Ordenar por</label>
             <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
-              <option value="score_desc" {% if filters.sort == 'score_desc' %}selected{% endif %}>Score</option>
+              <option value="score_desc"    {% if filters.sort == 'score_desc' %}selected{% endif %}>Score ↓</option>
               <option value="discount_desc" {% if filters.sort == 'discount_desc' %}selected{% endif %}>Mayor descuento</option>
-              <option value="price_asc" {% if filters.sort == 'price_asc' %}selected{% endif %}>Menor precio</option>
-              <option value="price_desc" {% if filters.sort == 'price_desc' %}selected{% endif %}>Mayor precio</option>
-              <option value="newest" {% if filters.sort == 'newest' %}selected{% endif %}>Más recientes</option>
+              <option value="price_asc"     {% if filters.sort == 'price_asc' %}selected{% endif %}>Menor precio</option>
+              <option value="price_desc"    {% if filters.sort == 'price_desc' %}selected{% endif %}>Mayor precio</option>
+              <option value="newest"        {% if filters.sort == 'newest' %}selected{% endif %}>Más recientes</option>
             </select>
           </div>
 
-          <div class="col-6 col-md-2">
+          <div class="col-12 col-md-4">
             <label class="form-label small fw-semibold mb-1">
-              Score ≥ <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>
+              Score mín: <span id="scoreVal">{{ filters.min_score if filters.min_score != '' else '0' }}</span>
             </label>
             <input type="range" name="min_score" class="form-range"
                    min="0" max="100" value="{{ filters.min_score if filters.min_score != '' else '0' }}"
                    oninput="document.getElementById('scoreVal').textContent = this.value" />
           </div>
 
-          <div class="col-12 col-md-2 d-flex align-items-end gap-2">
+          <div class="col-12 col-md-4 d-flex align-items-end gap-2">
             <button type="submit" class="btn btn-primary btn-sm flex-grow-1">
               <i class="bi bi-funnel-fill me-1"></i>Filtrar
             </button>
