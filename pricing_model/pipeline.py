@@ -26,7 +26,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-MODEL_VERSION = 3  # v3: added days_on_market + price_changes_count features
+MODEL_VERSION = 4  # v4: removed leaky days_on_market/price_changes; added log_km + km_per_year
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,6 @@ class PricingPipeline:
             Listing.km, Listing.seller_city,
             Listing.fuel, Listing.transmission,
             Listing.price_ars, Listing.price_usd_equiv,
-            Listing.first_seen, Listing.price_changes_count,
         ).filter(
             Listing.price_ars > 0,
             Listing.year.isnot(None),
@@ -97,9 +96,8 @@ class PricingPipeline:
             return False
 
         current_year = datetime.utcnow().year
-        now = datetime.utcnow()
         records = []
-        for brand, model, year, km, city, fuel, transmission, price_ars, price_usd_equiv, first_seen, price_changes_count in rows:
+        for brand, model, year, km, city, fuel, transmission, price_ars, price_usd_equiv in rows:
             usd = price_usd_equiv if price_usd_equiv and price_usd_equiv > 0 \
                   else (price_ars / usd_rate if price_ars else None)
             if not usd or usd <= 0:
@@ -109,18 +107,27 @@ class PricingPipeline:
             antigüedad = current_year - year
             if antigüedad < 0 or antigüedad > 30:
                 continue
-            days_on_market = min(float((now - first_seen).days) if first_seen else 0.0, 180.0)
+            km_val = float(km or 0)
+            # log(km+1): compresses the wide km range (500–200k) into a roughly linear
+            # relationship with log(price), reflecting that each extra km matters less
+            # as the car ages. Avoids giving excessive leverage to high-km outliers.
+            log_km = math.log(km_val + 1)
+            # km_per_year: usage intensity — a 5-year-old car with 150k km is very
+            # different from one with 30k km. LightGBM can learn splits on km and
+            # antiguedad separately, but an explicit ratio helps it generalise to
+            # unseen (km, age) combinations and avoids requiring large interaction depth.
+            km_per_year = km_val / max(antigüedad, 1.0)
             records.append({
-                "brand":          (brand or "").strip().lower(),
-                "model":          self._base_model(model or ""),
-                "antiguedad":     float(antigüedad),
-                "km":             float(km or 0),
-                "province":       (city or "").strip().lower(),
-                "fuel":           (fuel or "").strip().lower(),
-                "transmission":   (transmission or "").strip().lower(),
-                "days_on_market": days_on_market,
-                "price_changes":  float(price_changes_count or 0),
-                "log_price":      math.log(usd),
+                "brand":        (brand or "").strip().lower(),
+                "model":        self._base_model(model or ""),
+                "antiguedad":   float(antigüedad),
+                "km":           km_val,
+                "log_km":       log_km,
+                "km_per_year":  km_per_year,
+                "province":     (city or "").strip().lower(),
+                "fuel":         (fuel or "").strip().lower(),
+                "transmission": (transmission or "").strip().lower(),
+                "log_price":    math.log(usd),
             })
 
         if len(records) < MIN_TRAINING_SAMPLES:
@@ -149,11 +156,11 @@ class PricingPipeline:
                 self._encode(r["model"], "model"),
                 r["antiguedad"],
                 r["km"],
+                r["log_km"],
+                r["km_per_year"],
                 self._encode(r["province"],     "province"),
                 self._encode(r["fuel"],         "fuel"),
                 self._encode(r["transmission"], "transmission"),
-                r["days_on_market"],
-                r["price_changes"],
             ]
             for r in records
         ])
@@ -161,19 +168,29 @@ class PricingPipeline:
 
         dataset = lgb.Dataset(X, label=y, feature_name=[
             "brand_enc", "model_enc", "antiguedad", "km",
+            "log_km", "km_per_year",
             "province_enc", "fuel_enc", "transmission_enc",
-            "days_on_market", "price_changes",
         ])
         params = {
-            "objective":      "regression",
-            "metric":         "rmse",
-            "num_leaves":     31,
-            "learning_rate":  0.05,
-            "n_estimators":   200,
-            "min_child_samples": 5,
-            "verbose":        -1,
+            "objective":         "regression",
+            "metric":            "rmse",
+            # Increased leaves: the hedonic space has real curvature across brand × model
+            # × age × km interactions. 63 leaves ≈ up to 6 splits per tree — enough to
+            # capture non-linear km and age effects without overfitting at n≥300.
+            "num_leaves":        63,
+            "learning_rate":     0.05,
+            # More rounds with a lower min_child_samples to handle thin model/year cells.
+            # min_child_samples=10 prevents leaf splits on fewer than 10 samples,
+            # providing regularisation equivalent to ~3% of MIN_TRAINING_SAMPLES.
+            "min_child_samples": 10,
+            # subsample + colsample_bytree: stochastic gradient boosting reduces
+            # variance and speeds up training, especially useful when n<2000.
+            "subsample":         0.8,
+            "colsample_bytree":  0.8,
+            "reg_lambda":        1.0,   # L2 regularisation — extra guard against thin cells
+            "verbose":           -1,
         }
-        self._model = lgb.train(params, dataset, num_boost_round=200,
+        self._model = lgb.train(params, dataset, num_boost_round=300,
                                 valid_sets=[dataset], callbacks=[lgb.log_evaluation(period=-1)])
         self._trained_at = datetime.utcnow()
         self._save_cached(session=session)
@@ -192,16 +209,19 @@ class PricingPipeline:
             from scorer import _normalize_model
             current_year = datetime.utcnow().year
             antigüedad = float(current_year - (year or current_year))
+            km_val = float(km or 0)
+            log_km = math.log(km_val + 1)
+            km_per_year = km_val / max(antigüedad, 1.0)
             X = np.array([[
                 self._encode((brand or "").lower(),        "brand"),
                 self._encode(_normalize_model(model),      "model"),
                 antigüedad,
-                float(km or 0),
+                km_val,
+                log_km,
+                km_per_year,
                 self._encode((province or "").lower(),     "province"),
                 self._encode("",                           "fuel"),
                 self._encode("",                           "transmission"),
-                0.0,   # days_on_market: predict for a fresh listing
-                0.0,   # price_changes: predict for a fresh listing
             ]])
             log_price = self._model.predict(X)[0]
             return math.exp(log_price)

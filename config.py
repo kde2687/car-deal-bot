@@ -69,8 +69,12 @@ MAX_DISTANCE_KM = float(os.getenv("MAX_DISTANCE_KM", "1000"))
 
 # Price sanity filters
 MIN_PRICE_ARS = float(os.getenv("MIN_PRICE_ARS", "8000000"))    # $8M ARS mínimo base
-# Precio mínimo por año: $8M base + $1.5M por año desde 2015 (ej: 2022 → $18.5M mínimo)
-MIN_PRICE_ARS_PER_YEAR_INCREMENT = float(os.getenv("MIN_PRICE_ARS_PER_YEAR_INCREMENT", "1500000"))
+# Precio mínimo por año: $8M base + $1M por año desde 2015 (ej: 2022 → $15M mínimo).
+# El incremento fue reducido de $1.5M a $1M para que autos de años recientes con
+# descuentos genuinos del 15-25% no sean descartados antes de llegar al scoring.
+# A $1M/año, un auto 2023 tiene piso de $16M ARS (~USD 10.7k al MEP de $1500),
+# lo cual sigue capturando precios de anticipo/fraude pero no corta deals reales.
+MIN_PRICE_ARS_PER_YEAR_INCREMENT = float(os.getenv("MIN_PRICE_ARS_PER_YEAR_INCREMENT", "1000000"))
 MAX_PRICE_ARS = float(os.getenv("MAX_PRICE_ARS", "200000000"))  # $200M ARS máximo
 MIN_PRICE_USD = float(os.getenv("MIN_PRICE_USD", "3000"))       # USD 3.000 mínimo
 MAX_PRICE_USD = float(os.getenv("MAX_PRICE_USD", "150000"))     # USD 150.000 máximo

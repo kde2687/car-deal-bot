@@ -206,7 +206,6 @@ def create_app() -> Flask:
                 Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
-                Listing.discount_pct >= 0,
             )
             query = _apply_filters(query, **f)
             sort = f.get("sort", "score_desc")

@@ -115,9 +115,9 @@ def _confidence_index(ref_type: str, n: int, prices: list[float]) -> int:
     # Market homogeneity via QCD
     if prices and len(prices) >= 4:
         sp = sorted(prices)
-        n = len(sp)
-        q1 = sp[max(0, (n - 1) // 4)]
-        q3 = sp[min(n - 1, 3 * (n - 1) // 4)]
+        np_ = len(sp)  # local alias — avoids shadowing the sample-count parameter `n`
+        q1 = sp[max(0, (np_ - 1) // 4)]
+        q3 = sp[min(np_ - 1, 3 * (np_ - 1) // 4)]
         qcd = (q3 - q1) / (q3 + q1) if (q3 + q1) > 0 else 0.5
     elif prices and len(prices) >= 2:
         mean = sum(prices) / len(prices)
@@ -272,11 +272,28 @@ def calculate_market_reference(
     if not base_model:
         return None, None, 0, "cold", None, 0
 
-    year_exact  = [year - 1, year, year + 1]
-    year_broad  = list(range(year - 3, year + 4))
+    year_same   = [year]                          # Pass 0: same model year only
+    year_exact  = [year - 1, year, year + 1]      # Pass 1-2: ±1 year band
+    year_broad  = list(range(year - 2, year + 3)) # Pass 3: ±2 years (was ±3)
+    # NOTE: year_broad narrowed from ±3 to ±2.  In a market with ~8-12% annual
+    # depreciation a ±3-year window spans up to 6 model-years with no age
+    # adjustment, producing a median biased by up to ±25% depending on the
+    # age distribution of the comparable pool.  ±2 years limits that drift to
+    # ±16% while still providing sample coverage.  Segments that still lack
+    # data at ±2 fall through to the depreciation curve (Pass 4), which is a
+    # more principled interpolator than an unadjusted multi-year pooled median.
 
     def _pct(prices):
         return _percentile_rank(listing_price_usd, prices) if listing_price_usd and prices else None
+
+    # Pass 0: same model year, km filtered — highest precision, eliminates year-mix bias
+    prices, weights = _fetch(year_same, km_filter=True)
+    if len(prices) >= MIN_SAMPLE_SIZE:
+        median_usd = _weighted_median(prices, weights)
+        median_ars = median_usd * usd_rate
+        _save_market_ref(session, brand, model, year, median_ars,
+                         median_usd, usd_rate, len(prices))
+        return median_usd, median_ars, len(prices), "exact", _pct(prices), _confidence_index("exact", len(prices), prices)
 
     # Pass 1: exact year ±1, km filtered
     prices, weights = _fetch(year_exact, km_filter=True)
@@ -296,7 +313,7 @@ def calculate_market_reference(
                          median_usd, usd_rate, len(prices))
         return median_usd, median_ars, len(prices), "exact_nokm", _pct(prices), _confidence_index("exact_nokm", len(prices), prices)
 
-    # Pass 3: broad year ±3, no km filter
+    # Pass 3: broad year ±2, no km filter (narrowed from ±3 — reduces age-mix bias)
     prices, weights = _fetch(year_broad, km_filter=False)
     if len(prices) >= MIN_SAMPLE_SIZE:
         median_usd = _weighted_median(prices, weights)
@@ -308,8 +325,10 @@ def calculate_market_reference(
         session, brand, base_model, year, usd_rate, half_life, cutoff, exclude_id
     )
     if curve_result is not None:
-        est_usd, n_samples = curve_result
-        return est_usd, est_usd * usd_rate, n_samples, "curve", None, _confidence_index("curve", n_samples, [])
+        est_usd, n_samples, curve_prices = curve_result
+        # Pass the actual prices list so QCD reflects real curve-data dispersion,
+        # not the worst-case qcd=0.5 that resulted from passing an empty list.
+        return est_usd, est_usd * usd_rate, n_samples, "curve", None, _confidence_index("curve", n_samples, curve_prices)
 
     # Pass 5: brand fallback — same brand, similar antigüedad (±2 años), any model
     brand_result = _brand_age_fallback(
@@ -335,11 +354,14 @@ def calculate_market_reference(
 
 def _depreciation_curve_estimate(
     session, brand, base_model, target_year, usd_rate, half_life, cutoff, exclude_id
-) -> Optional[tuple[float, int]]:
+) -> Optional[tuple[float, int, list]]:
     """
     Fetch all years of the same model, fit depreciation curve, estimate price
     at target antigüedad = current_year - target_year.
-    Returns (estimated_usd, sample_count) or None.
+    Returns (estimated_usd, sample_count, prices_usd) or None.
+    prices_usd is the full list of raw comparable prices used to fit the curve —
+    passed to _confidence_index so QCD is computed from real data rather than
+    the worst-case default of 0.5 that was used when the list was empty.
     """
     target_age = _current_year() - target_year
     if target_age < 0:
@@ -385,7 +407,7 @@ def _depreciation_curve_estimate(
     # Sanity check: estimate must be within 5x of data range
     if not (min(prices) * 0.2 <= estimated <= max(prices) * 5):
         return None
-    return estimated, len(ages)
+    return estimated, len(ages), prices
 
 
 def _brand_age_fallback(
@@ -728,11 +750,12 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
             obj.confidence_index = result.get("confidence_index")
             if result["is_deal"] and not obj.is_deal:
                 obj.is_deal = True
-                obj.alerted = False
+                obj.alerted = False   # reset so Telegram alert fires for this new deal
                 upgraded += 1
             elif not result["is_deal"]:
                 obj.is_deal = False
-                obj.alerted = False
+                # Do NOT reset alerted here: if the listing re-qualifies later we don't
+                # want a duplicate Telegram alert for a deal the user already saw.
             rescored += 1
         except Exception as e:
             logger.debug(f"Rescore failed for {obj.id}: {e}")
