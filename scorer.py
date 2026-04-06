@@ -732,16 +732,11 @@ def update_segment_velocity(session) -> int:
                     avg_days_to_sale=avg, median_days_to_sale=med,
                     sample_count=len(days_list), updated_at=datetime.utcnow(),
                 ))
+            session.commit()
             updated += 1
         except Exception as e:
             logger.warning(f"SegmentVelocity update failed {brand} {base_model} {year}: {e}")
             session.rollback()
-
-    try:
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logger.error(f"update_segment_velocity commit failed: {e}")
 
     logger.info(f"Segment velocity: {updated} segments updated from {len(sold)} sold listings")
     return updated
@@ -776,6 +771,8 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
                 "price_usd": obj.price_usd,
                 "days_on_market": (datetime.utcnow() - obj.first_seen).days if obj.first_seen else 0,
                 "price_changes_count": obj.price_changes_count or 0,
+                "raw_data": obj.raw_data,
+                "market_price_ars": obj.market_price_ars,
             }
             result = score_listing(session, listing_dict)
             old_ref = obj.ref_type
@@ -984,12 +981,13 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                 listing_obj.ref_type = score_result.get("ref_type")
                 listing_obj.confidence_index = score_result.get("confidence_index")
 
-                if score_result["is_deal"] and not listing_obj.is_deal:
-                    listing_obj.is_deal = True
-                    listing_obj.alerted = False
-                    deal_count += 1
-                elif not score_result["is_deal"]:
-                    listing_obj.is_deal = False
+                if not listing_obj.is_agency:
+                    if score_result["is_deal"] and not listing_obj.is_deal:
+                        listing_obj.is_deal = True
+                        listing_obj.alerted = False
+                        deal_count += 1
+                    elif not score_result["is_deal"]:
+                        listing_obj.is_deal = False
 
                 # Record initial price event for new listings only
                 if listing_obj.first_seen == now:
