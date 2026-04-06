@@ -607,7 +607,9 @@ def create_app() -> Flask:
                 last_updated=None, new_today=0, avg_score=0,
                 sources=[], unique_brands=[], unique_cities=[],
                 origin_name=ORIGIN_NAME, origin_coords=(ORIGIN_LAT, ORIGIN_LON),
-                all_origin_cities=sorted(CITY_COORDS.keys()), view="hidden")
+                all_origin_cities=sorted(CITY_COORDS.keys()),
+                usd_rate=config.get_usd_mep_rate(),
+                view="hidden")
         finally:
             session.close()
 

@@ -867,6 +867,7 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                 seen_ids.add(listing_id)
                 existing = session.query(Listing).filter_by(id=listing_id).first()
                 now = datetime.utcnow()
+                seller_blocked = False  # set in the new-listing branch below
 
                 if existing:
                     if existing.hidden or existing.is_agency:
@@ -970,6 +971,13 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         new_ml_ids.append(listing_id)
 
                 session.flush()
+
+                if seller_blocked:
+                    # Preserve the "Vendedor bloqueado" deal_reason — skip scoring entirely.
+                    if listing_obj.first_seen == now:
+                        _record_price_event(session, listing_obj, "initial", now)
+                    session.commit()
+                    continue
 
                 score_result = score_listing(session, listing_dict)
                 listing_obj.score = score_result["score"]
