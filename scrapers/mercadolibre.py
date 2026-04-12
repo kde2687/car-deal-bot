@@ -471,15 +471,29 @@ class MercadoLibreScraper:
             year = None
             km = None
             for txt in attr_texts:
-                if re.match(r"^\d{4}$", txt):
+                # Match standalone 4-digit year OR year followed by extra text ("2020 modelo")
+                year_m = re.search(r'\b(19\d{2}|20[012]\d)\b', txt)
+                if year_m and not year:
                     try:
-                        y = int(txt)
+                        y = int(year_m.group(1))
                         if 1990 <= y <= 2030:
                             year = y
                     except ValueError:
                         pass
-                elif "km" in txt.lower():
+                if "km" in txt.lower():
                     km = self._parse_km(txt)
+            if not year:
+                # Last-resort: try to extract year from card title text
+                title_el = li_el.select_one(".poly-component__title, h2, [class*=title]")
+                title_txt = title_el.get_text(strip=True) if title_el else ""
+                year_m2 = re.search(r'\b(19\d{2}|20[012]\d)\b', title_txt)
+                if year_m2:
+                    try:
+                        y = int(year_m2.group(1))
+                        if 1990 <= y <= 2030:
+                            year = y
+                    except ValueError:
+                        pass
             if not year:
                 return None  # no year = can't score reliably (matches API scraper behaviour)
             if year < self.min_year:

@@ -105,9 +105,21 @@ class TelegramAlerter:
 
             await self.app.initialize()
             await self.app.start()
-            await self.app.updater.start_polling(drop_pending_updates=True)
-            self._initialized = True
-            logger.info("Telegram bot initialized and polling")
+
+            # Polling for incoming commands — may fail if another instance (Railway) is
+            # already running with the same token.  A Conflict error here does NOT prevent
+            # sending outgoing messages (digests/alerts), so we mark _initialized=True
+            # regardless and only log the polling failure.
+            try:
+                await self.app.updater.start_polling(drop_pending_updates=True)
+                logger.info("Telegram bot initialized and polling for commands")
+            except Exception as poll_err:
+                logger.warning(
+                    f"Telegram polling failed (another instance running?): {poll_err} — "
+                    "outgoing messages (digests/alerts) will still work"
+                )
+
+            self._initialized = True  # outgoing send capability is always available
         except Exception as e:
             logger.error(f"Failed to initialize Telegram bot: {e}")
             self.app = None

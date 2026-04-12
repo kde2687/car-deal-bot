@@ -19,6 +19,7 @@ if "sqlite" in config.DATABASE_URL:
     def _set_wal_mode(dbapi_conn, _):
         dbapi_conn.execute("PRAGMA journal_mode=WAL")
         dbapi_conn.execute("PRAGMA synchronous=NORMAL")
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -51,7 +52,7 @@ class Listing(Base):
     hidden = Column(Boolean, default=False)       # manually hidden by user
     market_price_ars = Column(Float, nullable=True)  # market median used for scoring
     price_usd_equiv  = Column(Float, nullable=True)  # price converted to USD at MEP rate
-    percentile_rank  = Column(Integer, nullable=True) # price percentile within comparable set (lower = cheaper)
+    percentile_rank  = Column(Float, nullable=True)   # price percentile within comparable set (lower = cheaper) — Float for sub-integer precision
     ref_type         = Column(String, nullable=True)  # reference type: exact/broad/curve/etc.
     confidence_index = Column(Integer, nullable=True) # 0–100: type_weight × √(n/30) × exp(-3×QCD)
     # Panel tracking
@@ -71,11 +72,13 @@ class Listing(Base):
     raw_data = Column(JSON)
 
     __table_args__ = (
-        Index("idx_listing_brand_year",       "brand", "year"),
-        Index("idx_listing_deal_hidden",      "is_deal", "hidden", "is_agency"),
-        Index("idx_listing_score",            "score"),
-        Index("idx_listing_status_last_seen", "status", "last_seen"),
-        Index("idx_listing_source",           "source"),
+        Index("idx_listing_brand_year",          "brand", "year"),
+        Index("idx_listing_brand_model_year",    "brand", "model", "year"),  # speeds up market reference queries
+        Index("idx_listing_deal_hidden",         "is_deal", "hidden", "is_agency"),
+        Index("idx_listing_score",               "score"),
+        Index("idx_listing_status_last_seen",    "status", "last_seen"),
+        Index("idx_listing_source",              "source"),
+        Index("idx_listing_status",              "status"),  # standalone status index for active-only queries
     )
 
 

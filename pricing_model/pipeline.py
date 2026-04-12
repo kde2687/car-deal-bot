@@ -198,9 +198,12 @@ class PricingPipeline:
         return True
 
     def predict(self, brand: str, model: str, year: int,
-                km: int, province: str = "") -> Optional[float]:
+                km: int, province: str = "",
+                fuel: str = "", transmission: str = "") -> Optional[float]:
         """
         Returns estimated price in USD, or None if model not ready.
+        fuel and transmission are used when available — passing them improves accuracy
+        (diesel vs nafta can be ±15% price difference in Argentina).
         """
         if not self._model:
             return None
@@ -213,15 +216,15 @@ class PricingPipeline:
             log_km = math.log(km_val + 1)
             km_per_year = km_val / max(antigüedad, 1.0)
             X = np.array([[
-                self._encode((brand or "").lower(),        "brand"),
-                self._encode(_normalize_model(model),      "model"),
+                self._encode((brand or "").lower(),              "brand"),
+                self._encode(_normalize_model(model),            "model"),
                 antigüedad,
                 km_val,
                 log_km,
                 km_per_year,
-                self._encode((province or "").lower(),     "province"),
-                self._encode("",                           "fuel"),
-                self._encode("",                           "transmission"),
+                self._encode((province or "").lower(),           "province"),
+                self._encode((fuel or "").strip().lower(),        "fuel"),
+                self._encode((transmission or "").strip().lower(),"transmission"),
             ]])
             log_price = self._model.predict(X)[0]
             return math.exp(log_price)

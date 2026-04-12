@@ -2,6 +2,7 @@ import math
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
+import sqlalchemy
 from sqlalchemy import func
 
 import config
@@ -112,7 +113,8 @@ def create_app() -> Flask:
             ]
             query = query.filter(and_(*not_conds))
         elif vehicle_type == "moto":
-            query = query.filter(Listing.id == None)
+            # No motorcycle data in current scrapers — return empty set explicitly
+            query = query.filter(sqlalchemy.false())
         if brand:
             query = query.filter(Listing.brand.ilike(f"%{brand}%"))
         if model:
@@ -718,11 +720,12 @@ def create_app() -> Flask:
     def api_deals():
         session = SessionLocal()
         try:
+            limit = min(request.args.get("limit", 50, type=int) or 50, 500)
             deals = (
                 session.query(Listing)
                 .filter(Listing.is_deal == True, Listing.status == "active")
                 .order_by(Listing.score.desc())
-                .limit(50)
+                .limit(limit)
                 .all()
             )
             result = []

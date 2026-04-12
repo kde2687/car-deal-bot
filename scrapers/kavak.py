@@ -209,22 +209,27 @@ class KavakScraper:
 
                 chunks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', html, re.DOTALL)
                 page_new = 0
+                page_parsed = 0  # total car records parsed (regardless of filters)
                 for chunk in chunks:
                     if "mainPrice" not in chunk:
                         continue
                     for car in self._parse_rsc_chunk(chunk):
+                        page_parsed += 1
                         normalized = self._normalize_car(car)
                         if normalized and normalized["id"] not in seen_ids and self._passes_filters(normalized):
                             seen_ids.add(normalized["id"])
                             listings.append(normalized)
                             page_new += 1
 
-                logger.info(f"Kavak page {page_num}: {page_new} new listings (total: {len(listings)})")
+                logger.info(f"Kavak page {page_num}: {page_new} new listings ({page_parsed} parsed, total: {len(listings)})")
 
-                if page_new == 0:
+                if page_parsed == 0:
+                    # Truly empty page — either end of pagination or RSC parse failure
                     if page_num == 1:
                         logger.warning("Kavak: no RSC car data found on first page — site may have changed")
                     break
+                # page_new==0 but page_parsed>0 means all were filtered (seen or below min_year/max_km)
+                # — continue scraping, more unique listings may appear on later pages
 
                 await asyncio.sleep(2.0)
 

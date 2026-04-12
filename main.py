@@ -71,8 +71,12 @@ async def run_scan(telegram_alerter=None):
     async def safe_scrape(name, scraper):
         t = time.time()
         try:
-            result = await scraper.fetch_listings()
+            # Per-scraper timeout: one slow source won't block the others
+            result = await asyncio.wait_for(scraper.fetch_listings(), timeout=380.0)
             return result or [], time.time() - t
+        except asyncio.TimeoutError:
+            logger.error(f"{name} scraper timed out after 380s — returning empty")
+            return [], time.time() - t
         except Exception as e:
             logger.error(f"{name} scraper failed: {e}")
             return [], time.time() - t
@@ -87,9 +91,11 @@ async def run_scan(telegram_alerter=None):
             timeout=420.0,
         )
     except asyncio.TimeoutError:
-        logger.error("Scrape phase exceeded 420s timeout — using empty results")
-        ml_listings, ac_listings, kavak_listings = [], [], []
-        t_ml = t_ac = t_kavak = 0.0
+        # Global timeout: all scrapers hung simultaneously.
+        # Do NOT process empty results — process_listings([]) with empty scraped_sources
+        # would mark ALL active listings as sold (cascading data loss).
+        logger.error("Scrape phase exceeded 420s global timeout — skipping scan to preserve DB state")
+        return
 
     all_listings = ml_listings + ac_listings + kavak_listings
     logger.info(f"Fetched {len(ml_listings)} ML + {len(ac_listings)} Autocosmos + {len(kavak_listings)} Kavak = {len(all_listings)} total")
@@ -113,6 +119,19 @@ async def run_scan(telegram_alerter=None):
                 logger.info(f"ML enrich: removed {agencies_found} agency listings")
         except Exception as e:
             logger.error(f"ML enrich failed: {e}")
+
+    # Post-scan rescore: after enrichment updates market_price_ars the scores are stale.
+    # Re-scoring immediately ensures deal flags and scores reflect the enriched data
+    # instead of waiting up to 4 hours for the next periodic market refresh.
+    try:
+        from scorer import rescore_all_active_listings
+        from database import SessionLocal as _SL
+        loop = asyncio.get_running_loop()
+        _r, _u = await loop.run_in_executor(None, rescore_all_active_listings, _SL())
+        if _u:
+            logger.info(f"Post-scan rescore: {_r} rescored, {_u} new deals after enrichment")
+    except Exception as e:
+        logger.error(f"Post-scan rescore failed: {e}")
 
     # Individual per-scan alerts disabled — digest sent daily at 8am via scheduler
 
@@ -265,13 +284,13 @@ async def main():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         scheduler = AsyncIOScheduler()
-        # Scan cada 2 horas
+        # Scan interval: controlled via SCAN_INTERVAL_MINUTES env var (default 30 min)
         scheduler.add_job(
             run_scan,
             "interval",
-            hours=2,
+            minutes=cfg.SCAN_INTERVAL_MINUTES,
             args=[alerter],
-            id="scan_every_2h",
+            id="scan_periodic",
         )
         scheduler.add_job(
             run_market_refresh,
@@ -311,7 +330,7 @@ async def main():
             id="telegram_digest_8am",
         )
         scheduler.start()
-        logger.info("Scheduler started: scans every 2h, market refresh every 4h")
+        logger.info(f"Scheduler started: scans every {cfg.SCAN_INTERVAL_MINUTES}min, market refresh every 4h")
     except Exception as e:
         logger.error(f"Scheduler failed to start: {e}")
         scheduler = None

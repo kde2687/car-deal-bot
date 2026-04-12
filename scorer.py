@@ -73,7 +73,7 @@ def _normalize_model(model: str) -> str:
 # Market reference
 # ---------------------------------------------------------------------------
 
-MIN_SAMPLE_SIZE = 2   # minimum comparables needed for a market reference
+MIN_SAMPLE_SIZE = 3   # minimum comparables needed for a market reference (raised from 2 — n=2 medians are statistically unreliable)
 
 # Confidence index saturation point — n=30 gives full size_score=1.0
 # Based on SE_median ∝ 1/√n (asymptotic theory of quantile estimators)
@@ -83,7 +83,8 @@ _CI_N_SAT = 30.0
 # exact=no bias, brand_fallback=high bias (ignores model, km, year precision)
 _CI_TYPE_WEIGHT = {
     "exact":          1.00,
-    "exact_nokm":     0.85,
+    "exact_nokm":     0.85,  # ±1yr, km filtered
+    "exact_yr":       0.75,  # ±1yr, NO km filter (was mislabelled "exact_nokm" in Pass 2)
     "broad":          0.60,
     "curve":          0.35,
     "brand_fallback": 0.20,
@@ -159,16 +160,14 @@ def _weighted_median(values: list[float], weights: list[float]) -> float:
     return pairs[-1][0]
 
 
-_DECAY_LAMBDA: float = 0.0  # precomputed at first use
-
-
 def _decay_weight(first_seen: datetime, half_life_days: int) -> float:
-    """Exponential decay: weight = e^(-λ * days_old), λ = ln(2) / half_life."""
-    global _DECAY_LAMBDA
-    if not _DECAY_LAMBDA:
-        _DECAY_LAMBDA = math.log(2) / half_life_days
+    """Exponential decay: weight = e^(-λ * days_old), λ = ln(2) / half_life.
+    Pure function — no global state; correctly handles config changes at runtime."""
+    if half_life_days <= 0:
+        return 1.0
+    lambda_ = math.log(2) / half_life_days
     days_old = max(0.0, (datetime.utcnow() - first_seen).total_seconds() / 86400)
-    return math.exp(-_DECAY_LAMBDA * days_old)
+    return math.exp(-lambda_ * days_old)
 
 
 def _fit_depreciation_curve(
@@ -198,18 +197,75 @@ def _fit_depreciation_curve(
         return None
 
 
-def _percentile_rank(price_usd: float, comparables: list[float]) -> int:
-    """What % of comparables cost LESS than this listing (lower = cheaper = better deal)."""
+def _percentile_rank(price_usd: float, comparables: list[float]) -> float:
+    """What % of comparables cost LESS than this listing (lower = cheaper = better deal).
+    Returns float for sub-integer precision stored in the database percentile_rank column."""
     if not comparables:
-        return 50
-    below = sum(1 for p in comparables if p < price_usd)
-    return round(below / len(comparables) * 100)
+        return 50.0
+    below = sum(1 for p in comparables if p <= price_usd)  # ≤ to handle exact price matches
+    return round(below / len(comparables) * 100, 1)
+
+
+def _fetch_broad_comparables(
+    session, brand: str, base_model: str, year: int,
+    exclude_id: Optional[str], usd_rate: float,
+) -> list[float]:
+    """
+    Fetch a broad pool of comparable prices (±3 years, no km filter) for
+    outlier detection via modified Z-score. Uses a wider window than the
+    scoring passes to ensure enough mass for a stable MAD estimate (n≥4).
+    """
+    from config import MARKET_HISTORY_DAYS
+    cutoff = datetime.utcnow() - timedelta(days=MARKET_HISTORY_DAYS)
+    year_range = list(range(year - 3, year + 4))
+    rows = (
+        session.query(Listing.id, Listing.price_ars, Listing.price_usd_equiv, Listing.model)
+        .filter(
+            Listing.brand.ilike(brand),
+            Listing.year.in_(year_range),
+            (Listing.price_ars > 0) | (Listing.price_usd_equiv > 0),
+            Listing.first_seen >= cutoff,
+            Listing.hidden != True,
+            Listing.status.in_(["active", "sold"]),
+        )
+        .all()
+    )
+    prices = []
+    for lid, price_ars, price_usd_equiv, row_model in rows:
+        if exclude_id and lid == exclude_id:
+            continue
+        if _normalize_model(row_model or "") != base_model:
+            continue
+        usd = price_usd_equiv if price_usd_equiv and price_usd_equiv > 0 \
+              else _ars_to_usd(price_ars, usd_rate)
+        if usd > 0:
+            prices.append(usd)
+    return prices
+
+
+def _modified_z_score(price_usd: float, comparables: list[float]) -> Optional[float]:
+    """
+    Iglewicz & Hoaglin (1993) modified Z-score using MAD (Median Absolute Deviation).
+    Returns a negative value when the price is below the median (cheaper than market).
+    More robust than Z-score because MAD resists outliers in the comparable pool.
+
+    Interpretation: score < -2.0 → statistically cheap (≈ bottom 2% of distribution).
+    Returns None when comparables pool is too small (<4) for a reliable estimate.
+    """
+    if len(comparables) < 4:
+        return None
+    median = statistics.median(comparables)
+    mad = statistics.median([abs(p - median) for p in comparables])
+    if mad == 0:
+        return None  # all prices identical — no information
+    return 0.6745 * (price_usd - median) / mad
 
 
 def calculate_market_reference(
     session, brand: str, model: str, year: int,
     listing_km: Optional[int] = None, exclude_id: Optional[str] = None,
     listing_price_usd: Optional[float] = None,
+    listing_fuel: str = "", listing_transmission: str = "",
 ) -> tuple[Optional[float], Optional[float], int, str, Optional[int], int]:
     """
     Return (median_usd, median_ars_current, sample_count, ref_type, percentile_rank, confidence_index).
@@ -267,6 +323,23 @@ def calculate_market_reference(
             prices.append(usd)
             weights.append(w)
 
+        # IQR fence: remove extreme outliers before computing the median reference.
+        # With small pools (n=3-5) a single fraudulent or mis-entered price can
+        # corrupt the reference. k=2.5 is conservative — only removes clear outliers.
+        # Quartile formula matches _confidence_index: (n-1)//4 (lower-inclusive method).
+        if len(prices) >= 4:
+            sp = sorted(prices)
+            n_ = len(sp)
+            q1 = sp[max(0, (n_ - 1) // 4)]
+            q3 = sp[min(n_ - 1, 3 * (n_ - 1) // 4)]
+            iqr = q3 - q1
+            if iqr > 0:
+                lo, hi = q1 - 2.5 * iqr, q3 + 2.5 * iqr
+                pairs = [(p, w) for p, w in zip(prices, weights) if lo <= p <= hi]
+                if len(pairs) >= MIN_SAMPLE_SIZE:
+                    prices  = [p for p, w in pairs]
+                    weights = [w for p, w in pairs]
+
         return prices, weights
 
     if not base_model:
@@ -304,14 +377,14 @@ def calculate_market_reference(
                          median_usd, usd_rate, len(prices))
         return median_usd, median_ars, len(prices), "exact_nokm", _pct(prices), _confidence_index("exact_nokm", len(prices), prices)
 
-    # Pass 2: exact year ±1, no km filter
+    # Pass 2: exact year ±1, no km filter — slightly less precise than Pass 1 (no km constraint)
     prices, weights = _fetch(year_exact, km_filter=False)
     if len(prices) >= MIN_SAMPLE_SIZE:
         median_usd = _weighted_median(prices, weights)
         median_ars = median_usd * usd_rate
         _save_market_ref(session, brand, model, year, median_ars,
                          median_usd, usd_rate, len(prices))
-        return median_usd, median_ars, len(prices), "exact_nokm", _pct(prices), _confidence_index("exact_nokm", len(prices), prices)
+        return median_usd, median_ars, len(prices), "exact_yr", _pct(prices), _confidence_index("exact_yr", len(prices), prices)
 
     # Pass 3: broad year ±2, no km filter (narrowed from ±3 — reduces age-mix bias)
     prices, weights = _fetch(year_broad, km_filter=False)
@@ -330,24 +403,36 @@ def calculate_market_reference(
         # not the worst-case qcd=0.5 that resulted from passing an empty list.
         return est_usd, est_usd * usd_rate, n_samples, "curve", None, _confidence_index("curve", n_samples, curve_prices)
 
-    # Pass 5: brand fallback — same brand, similar antigüedad (±2 años), any model
-    brand_result = _brand_age_fallback(
-        session, brand, year, usd_rate, half_life, cutoff, exclude_id
-    )
-    if brand_result is not None:
-        est_usd, n_samples, bf_prices = brand_result
-        return est_usd, est_usd * usd_rate, n_samples, "brand_fallback", None, _confidence_index("brand_fallback", n_samples, bf_prices)
-
-    # Pass 6: LightGBM hedonic model (activates automatically when ≥300 listings)
+    # Pass 4B: LightGBM hedonic model — moved before brand_fallback because the ML
+    # model controls for brand, model, year, km, fuel, transmission and province,
+    # making it a far less biased estimator than brand_fallback (which ignores model
+    # and km entirely). CI weight 0.45 vs 0.20 reflects this lower bias.
+    # Activates automatically when ≥300 listings in the DB.
     try:
         from pricing_model.pipeline import get_pipeline
         pipeline = get_pipeline()
         if pipeline.is_ready():
-            est_usd = pipeline.predict(brand, model, year, listing_km or 0)
+            est_usd = pipeline.predict(
+                brand, model, year, listing_km or 0,
+                province="",  # province not available at this scope
+                fuel=listing_fuel,
+                transmission=listing_transmission,
+            )
             if est_usd and est_usd > 0:
                 return est_usd, est_usd * usd_rate, 0, "ml_model", None, _confidence_index("ml_model", 0, [])
     except Exception as e:
-        logger.debug(f"ML model fallback failed: {e}")
+        logger.debug(f"ML model Pass 4B failed: {e}")
+
+    # Pass 5: brand fallback — same brand, similar antigüedad (±2 años), any model.
+    # Filtered by price segment (0.35x–3.0x the listing price) to avoid mixing
+    # different-segment models (e.g. VW Polo vs Amarok in the same brand pool).
+    brand_result = _brand_age_fallback(
+        session, brand, year, usd_rate, half_life, cutoff, exclude_id,
+        listing_price_usd=listing_price_usd,
+    )
+    if brand_result is not None:
+        est_usd, n_samples, bf_prices = brand_result
+        return est_usd, est_usd * usd_rate, n_samples, "brand_fallback", None, _confidence_index("brand_fallback", n_samples, bf_prices)
 
     return None, None, 0, "cold", None, 0
 
@@ -411,11 +496,16 @@ def _depreciation_curve_estimate(
 
 
 def _brand_age_fallback(
-    session, brand, target_year, usd_rate, half_life, cutoff, exclude_id
+    session, brand, target_year, usd_rate, half_life, cutoff, exclude_id,
+    listing_price_usd: Optional[float] = None,
 ) -> Optional[tuple[float, int, list[float]]]:
     """
     Same brand, any model, antigüedad within ±2 years of target.
     Returns (weighted_median_usd, sample_count) or None.
+
+    When listing_price_usd is provided, filters comparables to 0.35x–3.0x the
+    listing price. This prevents mixing price segments (e.g. VW Polo vs Amarok)
+    which would produce a wildly inaccurate median reference.
     """
     target_age = _current_year() - target_year
     min_year = _current_year() - (target_age + 2)
@@ -437,6 +527,13 @@ def _brand_age_fallback(
             continue
         usd = price_usd_equiv if price_usd_equiv and price_usd_equiv > 0 \
               else _ars_to_usd(price_ars, usd_rate)
+        # Price-segment filter: avoid mixing Polo (USD 12k) with Amarok (USD 40k)
+        # in the same brand pool. Without this, brands with wide model ranges
+        # produce medians that misrepresent the target segment by up to 3x.
+        if listing_price_usd and listing_price_usd > 0:
+            ratio = usd / listing_price_usd
+            if not (0.35 <= ratio <= 3.0):
+                continue
         w = _decay_weight(first_seen, half_life) if first_seen else 1.0
         prices.append(usd)
         weights.append(w)
@@ -494,15 +591,18 @@ def score_listing(session, listing_dict: dict) -> dict:
         return {"score": 0.0, "discount_pct": 0.0, "is_deal": False,
                 "deal_reason": "Sin precio disponible", "price_usd_equiv": None}
 
-    brand      = listing_dict.get("brand") or ""
-    model      = listing_dict.get("model") or ""
-    year       = listing_dict.get("year") or 0
-    km         = listing_dict.get("km") or 0
-    listing_id = listing_dict.get("id")
+    brand        = listing_dict.get("brand") or ""
+    model        = listing_dict.get("model") or ""
+    year         = listing_dict.get("year") or 0
+    km           = listing_dict.get("km") or 0
+    listing_id   = listing_dict.get("id")
+    fuel         = listing_dict.get("fuel") or ""
+    transmission = listing_dict.get("transmission") or ""
 
     market_usd, market_ars, sample_count, ref_type, percentile_rank, confidence_index = calculate_market_reference(
         session, brand, model, year, listing_km=km, exclude_id=listing_id,
         listing_price_usd=price_usd_equiv,
+        listing_fuel=fuel, listing_transmission=transmission,
     )
 
     # Fallback: if our DB has no comparables, use ML's own reference price hint
@@ -566,15 +666,16 @@ def score_listing(session, listing_dict: dict) -> dict:
         motivated_note = ""
 
     ref_labels = {
-        "exact":         f"{sample_count} muestras, km similar",
-        "exact_nokm":    f"{sample_count} muestras",
+        "exact":         f"{sample_count} muestras, mismo año, km similar",
+        "exact_nokm":    f"{sample_count} muestras, ±1 año, km similar",
+        "exact_yr":      f"{sample_count} muestras, ±1 año",
         "broad":         f"ref. amplia ±2 años, {sample_count} muestras",
         "curve":         f"curva depreciación, {sample_count} muestras",
         "brand_fallback":f"ref. marca similar, {sample_count} muestras",
         "ml_model":      "modelo ML hedónico",
     }
     ref_penalties = {
-        "exact": 0, "exact_nokm": -2, "broad": -5,
+        "exact": 0, "exact_nokm": -2, "exact_yr": -3, "broad": -5,
         "curve": -8, "brand_fallback": -15, "ml_model": -5,
     }
     ref_note    = f" ({ref_labels.get(ref_type, str(sample_count))})"
@@ -613,29 +714,51 @@ def score_listing(session, listing_dict: dict) -> dict:
     # Tighter reference → lower discount required (we trust the benchmark more).
     # Motivated seller signal lowers threshold by up to 2 pp.
     _deal_min_discount = {
-        "exact":          4.0,    # same model, ±1yr, similar km — high trust
-        "exact_nokm":     6.0,    # same model, ±1yr
-        "broad":          8.0,    # same model, ±3yr
-        "curve":          10.0,   # depreciation curve interpolation
-        "brand_fallback": 10.0,   # same brand, any model — low trust
-        "ml_model":       8.0,
+        "exact":          4.0,    # mismo año, km similar — máxima precisión
+        "exact_nokm":     6.0,    # ±1 año, km similar
+        "exact_yr":       7.0,    # ±1 año, sin filtro km — antes "exact_nokm" (Pass 2)
+        "broad":          8.0,    # ±2 años, sin filtro km
+        "curve":          10.0,   # curva de depreciación interpolada
+        "brand_fallback": 10.0,   # misma marca, cualquier modelo — baja precisión
+        "ml_model":       7.0,    # modelo ML hedónico (controla brand+model+year+km)
     }
     base_min = _deal_min_discount.get(ref_type, 100.0)
-    # Low-confidence references get higher discount requirements.
-    # confidence_index < 40 → +4pp (mixed trim pool, few comparables)
-    # confidence_index 40-60 → +2pp
-    # confidence_index > 60 → no penalty
-    if confidence_index < 40:
-        confidence_penalty = 4.0
-    elif confidence_index < 60:
-        confidence_penalty = 2.0
-    else:
-        confidence_penalty = 0.0
-    effective_min_discount = base_min + confidence_penalty - motivated_discount_reduction
+    # NOTE: confidence_index no longer adjusts the is_deal threshold.
+    # Previously CI<40 added +2pp, but with a young DB (~750 listings) ~80% of
+    # listings had CI<40 — meaning most comparables required 2pp extra discount
+    # to qualify, causing systematic missed deals. The confidence signal is already
+    # applied to final_score via the confidence multiplier sqrt(n/5); using it
+    # again on the threshold would double-penalise listings with small comparable
+    # pools, burying real deals when data is scarce. Threshold is now stable and
+    # only adjusted by the motivated-seller signal (real economic information).
+    effective_min_discount = base_min - motivated_discount_reduction
     is_deal = (
         discount_pct >= effective_min_discount
         and ref_type != "cold"
     )
+
+    # Statistical outlier check (modified Z-score / MAD).
+    # A listing can qualify as a deal even when the discount_pct narrowly misses the
+    # threshold, provided it is a statistically extreme low-price outlier relative to
+    # the comparable pool. This catches genuine deals where the reference median is
+    # slightly off (imprecise ref_type) but the price is clearly anomalous.
+    # Requires z ≤ -2.5 (≈ bottom 1%) AND at least half the normal threshold met.
+    outlier_note = ""
+    try:
+        broad_prices = _fetch_broad_comparables(
+            session, brand, _normalize_model(model), year,
+            exclude_id=listing_id, usd_rate=usd_rate,
+        )
+        mz = _modified_z_score(price_usd_equiv, broad_prices)
+        if mz is not None and mz <= -2.5 and not is_deal:
+            half_min = base_min * 0.5
+            if discount_pct >= half_min and ref_type != "cold":
+                is_deal = True
+                outlier_note = f" [Outlier estadístico: z={mz:.1f}]"
+        elif mz is not None and mz <= -1.8:
+            outlier_note = f" [Precio bajo en distribución: z={mz:.1f}]"
+    except Exception:
+        pass
 
     market_label = f"USD {market_usd:,.0f} ({format_ars(market_ars)})"
     asking_label = f"USD {price_usd_equiv:,.0f} ({format_ars(price_ars)})"
@@ -645,7 +768,7 @@ def score_listing(session, listing_dict: dict) -> dict:
     deal_reason = (
         f"{year} {brand} {_normalize_model(model).title()} — "
         f"precio: {asking_label} vs mediana mercado: {market_label}{ref_note} "
-        f"({discount_str}). {km_str}.{motivated_note}{velocity_note} Score: {final_score:.0f}/100"
+        f"({discount_str}). {km_str}.{motivated_note}{velocity_note}{outlier_note} Score: {final_score:.0f}/100"
     )
 
     return {
@@ -906,6 +1029,11 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                     existing.seller_lon = lon
                     existing.seller_city = city
                     existing.distance_km = distance
+                    if existing.status == "sold":
+                        # Listing reappeared after being marked sold — clear stale sold data
+                        # so it can be re-alerted if it qualifies as a deal again.
+                        existing.sold_at = None
+                        existing.alerted = False
                     existing.status = "active"  # re-activate if it was marked stale
 
                     if price_changed:
@@ -1036,10 +1164,10 @@ def _mark_sold_listings(session, seen_ids: set, scraped_sources: Optional[set] =
     Returns count of newly sold listings.
     """
     from database import PriceHistory
-    # Use a 6-hour window regardless of SCAN_INTERVAL_MINUTES to avoid
-    # premature sold-marking when the actual scan interval is 2h but
-    # SCAN_INTERVAL_MINUTES is set to a smaller value in config.
-    cutoff = datetime.utcnow() - timedelta(hours=6)
+    # 24-hour window: a listing must be absent from 12 consecutive 2-hour scans before
+    # being marked sold.  The previous 6-hour window caused false sold-markings when
+    # listings moved beyond the first 12 scraper pages between scans.
+    cutoff = datetime.utcnow() - timedelta(hours=24)
     q = (
         session.query(Listing)
         .filter(

@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _usd_mep_cache: dict = {"rate": None, "ts": 0.0}
 _usd_mep_lock = threading.RLock()
-_USD_MEP_FALLBACK = 1420.0
-_USD_MEP_TTL = 86400  # 24 horas
+_USD_MEP_FALLBACK = 1300.0  # Actualizado abril 2026 — revisar periódicamente
+_USD_MEP_TTL = 14400  # 4 horas (era 24h — demasiado tiempo en mercado volátil)
 
 
 def get_usd_mep_rate() -> float:
@@ -50,7 +50,7 @@ SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "30"))
 MIN_YEAR = int(os.getenv("MIN_YEAR", "2010"))
 MAX_KM = int(os.getenv("MAX_KM", "200000"))
 MIN_KM  = int(os.getenv("MIN_KM", "500"))      # Mínimo km — descarta 0km/nuevos
-BRANDS = os.getenv("BRANDS", "Toyota,Ford,Volkswagen,Chevrolet,Renault,Peugeot,Fiat,Citroen,Nissan,Honda,Hyundai,Kia,Jeep,Dodge,Mitsubishi,Suzuki")
+BRANDS = os.getenv("BRANDS", "Toyota,Ford,Volkswagen,Chevrolet,Renault,Peugeot,Fiat,Citroen,Nissan,Honda,Hyundai,Kia,Jeep,Dodge,Mitsubishi,Suzuki,MG,Haval,Chery,JAC,BYD,DFSK,Changan,Geely,Jetour")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///deals.db")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "changeme")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
@@ -87,7 +87,7 @@ USD_TO_ARS_RATE = float(os.getenv("USD_TO_ARS_RATE", "1350"))
 
 # Market reference window and decay
 MARKET_HISTORY_DAYS  = int(os.getenv("MARKET_HISTORY_DAYS", "365"))   # 1 año de historia
-MARKET_HALF_LIFE_DAYS = int(os.getenv("MARKET_HALF_LIFE_DAYS", "30")) # peso 0.5 a los 30 días
+MARKET_HALF_LIFE_DAYS = int(os.getenv("MARKET_HALF_LIFE_DAYS", "14")) # peso 0.5 a los 14 días (era 30 — muy largo para inflación 140% anual)
 MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "40000")) # ±40k km para referencia exacta
 
 # MercadoLibre API credentials

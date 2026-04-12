@@ -242,6 +242,26 @@ class AutocosmosScraper:
     async def fetch_listings(self) -> list:
         listings = []
         seen_ids = set()
+        # Secondary dedup: same title + same price = same physical car published twice.
+        # Autocosmos allows duplicate ads (different UUID, identical content) — we keep only
+        # the first occurrence so the dashboard doesn't show the same car twice.
+        seen_fingerprints: set[tuple] = set()
+
+        def _fingerprint(lst: dict) -> tuple:
+            """(title, price_ars) key — robust to minor km rounding differences."""
+            return (lst.get("title", "").strip().lower(), lst.get("price_ars"))
+
+        def _add_listing(lst: dict) -> bool:
+            if lst["id"] in seen_ids:
+                return False
+            fp = _fingerprint(lst)
+            if fp[0] and fp in seen_fingerprints:
+                logger.debug(f"Autocosmos dedup (same title+price): skipping {lst['id']}")
+                return False
+            seen_ids.add(lst["id"])
+            seen_fingerprints.add(fp)
+            listings.append(lst)
+            return True
 
         async with httpx.AsyncClient(headers=AC_HEADERS, follow_redirects=True) as client:
             for brand in self.brands:
@@ -267,9 +287,7 @@ class AutocosmosScraper:
 
                     for card in cards:
                         listing = self._parse_card(card, brand)
-                        if listing and listing["id"] not in seen_ids:
-                            seen_ids.add(listing["id"])
-                            listings.append(listing)
+                        if listing and _add_listing(listing):
                             brand_count += 1
 
                     await asyncio.sleep(2.0)
@@ -293,9 +311,7 @@ class AutocosmosScraper:
                             break
                         for card in cards:
                             listing = self._parse_card(card, brand)
-                            if listing and listing["id"] not in seen_ids:
-                                seen_ids.add(listing["id"])
-                                listings.append(listing)
+                            if listing and _add_listing(listing):
                                 reg_count += 1
                         await asyncio.sleep(1.5)
                     if reg_count:
