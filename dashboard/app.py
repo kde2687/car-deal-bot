@@ -524,6 +524,41 @@ def create_app() -> Flask:
             loop.close()
         return jsonify(result)
 
+    @app.route("/admin/reenrich_ml", methods=["POST"])
+    def reenrich_ml():
+        """Re-run ML agency enrichment on ALL active non-agency ML deals (not just new ones)."""
+        err = _check_admin()
+        if err: return err
+        session = SessionLocal()
+        try:
+            ids = [
+                r.id for r in session.query(Listing.id).filter(
+                    Listing.source == "mercadolibre",
+                    Listing.status == "active",
+                    Listing.is_agency != True,
+                    Listing.hidden != True,
+                ).all()
+            ]
+        finally:
+            session.close()
+
+        if not ids:
+            return jsonify({"status": "no listings to enrich"})
+
+        def _run():
+            import asyncio
+            from scrapers.ml_enrich import enrich_ml_new_listings
+            try:
+                found = asyncio.run(enrich_ml_new_listings(ids))
+                logger.info(f"Re-enrichment complete: {found} agencies found in {len(ids)} listings")
+            except Exception as e:
+                logger.error(f"Re-enrichment failed: {e}")
+
+        import threading
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return jsonify({"status": "re-enrichment started", "listings": len(ids)})
+
     @app.route("/admin/fix_overpriced", methods=["POST"])
     def fix_overpriced():
         """Clear is_deal flag for any listing with negative discount_pct."""
@@ -723,7 +758,12 @@ def create_app() -> Flask:
             limit = min(request.args.get("limit", 50, type=int) or 50, 500)
             deals = (
                 session.query(Listing)
-                .filter(Listing.is_deal == True, Listing.status == "active")
+                .filter(
+                    Listing.is_deal == True,
+                    Listing.status == "active",
+                    Listing.hidden != True,
+                    Listing.is_agency != True,
+                )
                 .order_by(Listing.score.desc())
                 .limit(limit)
                 .all()
