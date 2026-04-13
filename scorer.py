@@ -1035,6 +1035,10 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                     if existing.status == "sold":
                         # Listing reappeared after being marked sold — clear stale sold data
                         # so it can be re-alerted if it qualifies as a deal again.
+                        logger.info(
+                            f"Resurrection: {existing.id} ({existing.source}) reappeared after sold "
+                            f"(was sold {existing.sold_at})"
+                        )
                         existing.sold_at = None
                         existing.alerted = False
                     existing.status = "active"  # re-activate if it was marked stale
@@ -1186,10 +1190,16 @@ def _mark_sold_listings(session, seen_ids: set, scraped_sources: Optional[set] =
         q = q.filter(Listing.source.in_(scraped_sources))
     candidates = q.all()
     sold_count = 0
+    sold_by_source: dict = {}
     now = datetime.utcnow()
     for lst in candidates:
         if lst.id in seen_ids:
             continue  # was seen this scan, skip
+        hours_unseen = (now - lst.last_seen).total_seconds() / 3600 if lst.last_seen else 0
+        logger.debug(
+            f"Marking sold: {lst.id} ({lst.source}) last_seen={lst.last_seen} "
+            f"({hours_unseen:.1f}h ago) brand={lst.brand} model={lst.model}"
+        )
         lst.status = "sold"
         lst.sold_at = lst.last_seen   # best estimate: last time we saw it
         days = (lst.last_seen - lst.first_seen).days if lst.first_seen and lst.last_seen else 0
@@ -1202,8 +1212,10 @@ def _mark_sold_listings(session, seen_ids: set, scraped_sources: Optional[set] =
             event_type="sold",
         ))
         sold_count += 1
+        sold_by_source[lst.source] = sold_by_source.get(lst.source, 0) + 1
 
     if sold_count:
         session.commit()
-        logger.info(f"Panel: marked {sold_count} listings as sold")
+        src_breakdown = ", ".join(f"{s}={n}" for s, n in sorted(sold_by_source.items()))
+        logger.info(f"Marked {sold_count} listings as sold ({src_breakdown})")
     return sold_count
