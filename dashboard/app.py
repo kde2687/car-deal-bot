@@ -193,7 +193,7 @@ def create_app() -> Flask:
             "new_today":       bool(request.args.get("new_today")),
             "since":           request.args.get("since", "").strip(),
             "min_price_drops":  request.args.get("min_price_drops", type=int),
-            "sort":             request.args.get("sort", "score_desc"),
+            "sort":             request.args.get("sort", "discount_desc"),
             "vehicle_type":     request.args.get("vehicle_type", "").strip(),
         }
 
