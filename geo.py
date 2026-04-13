@@ -548,6 +548,61 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "tres isletas": (-26.3367, -60.4253),
     # Entre Ríos — extra
     "crespo": (-32.0333, -60.3167),
+    # GBA — localidades faltantes (detectadas via listings con distancia incorrecta)
+    "tortuguitas": (-34.4667, -58.7500),         # Partido Malvinas Argentinas, GBA
+    "grand bourg": (-34.4833, -58.7167),          # Partido Malvinas Argentinas, GBA
+    "los polvorines": (-34.5000, -58.7000),       # Partido Malvinas Argentinas, GBA
+    "ing. pablo nogués": (-34.4833, -58.7833),    # Partido Malvinas Argentinas, GBA
+    "pablo nogues": (-34.4833, -58.7833),
+    "pablo nogués": (-34.4833, -58.7833),
+    "joe pablo nogues": (-34.4833, -58.7833),
+    "el talar": (-34.4167, -58.6833),             # Partido Tigre, GBA
+    "rincon de milberg": (-34.3833, -58.6667),    # Partido Tigre, GBA
+    "rincón de milberg": (-34.3833, -58.6667),
+    "benavidez": (-34.4000, -58.6833),            # Partido Tigre, GBA
+    "benavídez": (-34.4000, -58.6833),
+    "general pacheco": (-34.4500, -58.6500),      # Partido Tigre, GBA
+    "dique luján": (-34.3667, -58.7500),          # Partido Tigre, GBA
+    "dique lujan": (-34.3667, -58.7500),
+    "open door": (-34.3833, -58.8833),            # Partido Luján, GBA
+    "maquinista savio": (-34.3833, -58.6833),     # Partido Escobar
+    "la lonja": (-34.3667, -58.8167),             # Partido Pilar
+    "del viso": (-34.4333, -58.8500),             # Partido Pilar
+    "presidente derqui": (-34.4833, -58.8667),    # Partido Pilar
+    "villa rosa": (-34.4667, -58.9000),           # Partido Pilar
+    "fátima": (-34.4167, -59.0167),               # Partido Pilar
+    "fatima": (-34.4167, -59.0167),
+    # Mendoza — localidades faltantes
+    "tupungato": (-33.3667, -69.1333),            # Valle de Uco, Mendoza
+    "tunuyán": (-33.5667, -69.0167),              # Valle de Uco, Mendoza
+    "tunuyan": (-33.5667, -69.0167),
+    "san carlos": (-33.7667, -69.0500),           # Valle de Uco, Mendoza
+    "rivadavia": (-33.1833, -68.4667),            # Mendoza (not to confuse with Rivadavia BA)
+    "junín mendoza": (-33.1333, -68.4667),
+    "lavalle": (-32.7167, -68.5667),              # Mendoza
+    "las heras": (-32.8500, -68.8167),            # Mendoza (not GBA)
+    "luján de cuyo": (-33.0500, -68.8833),        # Mendoza
+    "lujan de cuyo": (-33.0500, -68.8833),
+    "maipú mendoza": (-32.9833, -68.7833),
+    "godoy cruz": (-32.9167, -68.8333),           # Gran Mendoza
+    "guaymallén": (-32.8833, -68.7833),           # Gran Mendoza
+    "guaymallen": (-32.8833, -68.7833),
+    # Buenos Aires provincia — localidades faltantes
+    "san pedro": (-33.6833, -59.6667),            # Partido San Pedro, BA
+    "capitan sarmiento": (-34.1833, -59.7833),    # BA provincia
+    "capitán sarmiento": (-34.1833, -59.7833),
+    "navarro": (-35.0000, -59.2833),              # BA provincia
+    "roque perez": (-35.4000, -59.3333),          # BA provincia
+    "roque pérez": (-35.4000, -59.3333),
+    "saladillo": (-35.6333, -59.7667),            # BA provincia
+    "monte": (-35.4333, -58.8000),                # Partido Monte, BA
+    "chascomús": (-35.5667, -58.0000),            # BA provincia
+    "chascomus": (-35.5667, -58.0000),
+    "brandsen": (-35.1667, -58.2333),             # BA provincia
+    "lobos": (-35.1833, -59.0833),                # BA provincia
+    "gral. belgrano": (-35.7667, -58.5000),       # BA provincia
+    "general belgrano": (-35.7667, -58.5000),
+    "punta indio": (-35.2667, -57.2333),          # BA provincia
 }
 
 
@@ -582,10 +637,13 @@ def city_to_coords(city_name: str) -> Optional[tuple[float, float]]:
     if key in CITY_COORDS:
         return CITY_COORDS[key]
     # Partial match — city_name might be "Bahía Blanca, Buenos Aires".
+    # Require at least 4 chars to avoid accidental short-string matches.
     # Prefer the LONGEST matching key to avoid "santa rosa" swallowing
     # "santa rosa de calamuchita" or similar ambiguous substring collisions.
     best_known, best_coords = None, None
     for known, coords in CITY_COORDS.items():
+        if len(known) < 4:
+            continue
         if known in key or key in known:
             if best_known is None or len(known) > len(best_known):
                 best_known, best_coords = known, coords
