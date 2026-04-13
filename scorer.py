@@ -639,10 +639,11 @@ def score_listing(session, listing_dict: dict) -> dict:
     discount_pct = (market_usd - price_usd_equiv) / market_usd * 100
     base_score = max(0.0, min(100.0, discount_pct))
 
+    # Gradual km penalty: no cliff at 100k — linear from 50k→150k, max -12 at 150k+
     if km > 150_000:
-        km_mod = -15
-    elif km > 100_000:
-        km_mod = -5
+        km_mod = -12
+    elif km > 50_000:
+        km_mod = round(-12 * (km - 50_000) / 100_000, 1)
     else:
         km_mod = 0
 
@@ -702,9 +703,9 @@ def score_listing(session, listing_dict: dict) -> dict:
     except Exception:
         pass  # SegmentVelocity table may not exist yet on fresh deploys
 
-    # Confidence multiplier: full confidence at 5+ samples (was 10 — too aggressive
-    # for a young dataset where most models have 3-5 comparables)
-    confidence  = min(1.0, math.sqrt(sample_count / 5.0)) if sample_count > 0 else 1.0
+    # Confidence multiplier: full confidence at 4+ samples (was 5 — lowered so n=3
+    # minimum-sample references don't get penalised by 23% unnecessarily)
+    confidence  = min(1.0, math.sqrt(sample_count / 4.0)) if sample_count > 0 else 1.0
 
     raw_score   = max(0.0, min(100.0, base_score + km_mod + age_mod + ref_penalty + velocity_boost))
     final_score = max(0.0, min(100.0, raw_score * confidence))
@@ -717,9 +718,9 @@ def score_listing(session, listing_dict: dict) -> dict:
         "exact":          4.0,    # mismo año, km similar — máxima precisión
         "exact_nokm":     6.0,    # ±1 año, km similar
         "exact_yr":       7.0,    # ±1 año, sin filtro km — antes "exact_nokm" (Pass 2)
-        "broad":          8.0,    # ±2 años, sin filtro km
-        "curve":          10.0,   # curva de depreciación interpolada
-        "brand_fallback": 10.0,   # misma marca, cualquier modelo — baja precisión
+        "broad":          7.0,    # ±2 años, sin filtro km
+        "curve":          9.0,    # curva de depreciación interpolada
+        "brand_fallback": 12.0,   # misma marca, cualquier modelo — baja precisión (raised: noisy ref)
         "ml_model":       7.0,    # modelo ML hedónico (controla brand+model+year+km)
     }
     base_min = _deal_min_discount.get(ref_type, 100.0)

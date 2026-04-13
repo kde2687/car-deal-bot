@@ -28,11 +28,13 @@ def _build_html(deals: list, dashboard_url: str = "https://cardeal.ar") -> str:
     rows = ""
     for i, d in enumerate(deals, 1):
         price = _format_price(d.price_ars, d.price_usd)
+        market = _format_price(d.market_price_ars, None) if d.market_price_ars else ""
         km = f"{d.km:,} km" if d.km else "N/A"
         year = d.year or "N/A"
         city = d.seller_city or "—"
         dist = f"{d.distance_km:.0f} km" if d.distance_km else "—"
-        discount = f"{d.discount_pct:.0f}% OFF" if d.discount_pct and d.discount_pct > 0 else ""
+        discount = f"{d.discount_pct:.0f}% desc." if d.discount_pct and d.discount_pct > 0 else ""
+        market_line = f"<div style='color:#888;font-size:11px;margin-top:2px;'>Mercado: {market}</div>" if market else ""
         source_label = {"mercadolibre": "ML", "kavak": "Kavak", "autocosmos": "Autocosmos"}.get(d.source, d.source)
         rows += f"""
         <tr style="border-bottom:1px solid #eee;">
@@ -43,7 +45,8 @@ def _build_html(deals: list, dashboard_url: str = "https://cardeal.ar") -> str:
           </td>
           <td style="padding:10px 8px;white-space:nowrap;">
             <span style="font-size:16px;font-weight:bold;color:#222;">{price}</span>
-            {"<br><span style='color:#28a745;font-size:12px;font-weight:bold;'>" + discount + "</span>" if discount else ""}
+            {"<br><span style='color:#28a745;font-size:13px;font-weight:bold;'>" + discount + "</span>" if discount else ""}
+            {market_line}
           </td>
           <td style="padding:10px 8px;text-align:center;">
             <span style="background:#{'ffc107' if source_label=='ML' else '17a2b8'};color:{'#333' if source_label=='ML' else '#fff'};padding:2px 8px;border-radius:12px;font-size:12px;">{source_label}</span>
@@ -66,7 +69,7 @@ def _build_html(deals: list, dashboard_url: str = "https://cardeal.ar") -> str:
           <tr style="background:#f8f9fa;color:#666;font-size:12px;text-transform:uppercase;">
             <th style="padding:8px;">#</th>
             <th style="padding:8px;text-align:left;">Vehículo</th>
-            <th style="padding:8px;text-align:left;">Precio</th>
+            <th style="padding:8px;text-align:left;">Precio / Descuento</th>
             <th style="padding:8px;">Fuente</th>
             <th style="padding:8px;">Score</th>
           </tr>
@@ -89,7 +92,8 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
 
     session = SessionLocal()
     try:
-        deals = (
+        import config as _cfg
+        q = (
             session.query(Listing)
             .filter(
                 Listing.is_deal == True,
@@ -97,7 +101,14 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
                 Listing.hidden != True,
                 Listing.is_agency != True,
             )
-            .order_by(Listing.score.desc())
+        )
+        # Distance filter: skip listings with no coords only when MAX_DISTANCE_KM is set
+        if _cfg.MAX_DISTANCE_KM and _cfg.MAX_DISTANCE_KM < 9999:
+            q = q.filter(
+                (Listing.distance_km == None) | (Listing.distance_km <= _cfg.MAX_DISTANCE_KM)
+            )
+        deals = (
+            q.order_by(Listing.discount_pct.desc())
             .limit(10)
             .all()
         )
