@@ -153,10 +153,9 @@ async def run_scan(telegram_alerter=None):
 
 
 async def run_telegram_digest(telegram_alerter=None):
-    if telegram_alerter and getattr(telegram_alerter, "_initialized", False):
-        ok = await telegram_alerter.send_digest()
-        if ok:
-            logger.info("Telegram daily digest sent")
+    # Paused — email digest is sufficient until model quality improves
+    logger.info("Telegram digest skipped (paused)")
+    return
 
 
 async def run_email_digest():
