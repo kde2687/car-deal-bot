@@ -893,6 +893,8 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
                 "km": obj.km,
                 "price_ars": obj.price_ars,
                 "price_usd": obj.price_usd,
+                "fuel": obj.fuel or "",
+                "transmission": obj.transmission or "",
                 "days_on_market": (datetime.utcnow() - obj.first_seen).days if obj.first_seen else 0,
                 "price_changes_count": obj.price_changes_count or 0,
                 "raw_data": obj.raw_data,
