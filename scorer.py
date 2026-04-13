@@ -461,6 +461,7 @@ def _depreciation_curve_estimate(
         Listing.year.isnot(None),
         Listing.first_seen >= cutoff,
         Listing.hidden != True,
+        Listing.status.in_(["active", "sold"]),  # exclude expired/other states
     ).all()
 
     ages, prices, weights = [], [], []
@@ -519,6 +520,7 @@ def _brand_age_fallback(
         Listing.year.between(min_year, max_year),
         Listing.first_seen >= cutoff,
         Listing.hidden != True,
+        Listing.status.in_(["active", "sold"]),  # exclude expired/other states
     ).all()
 
     prices, weights = [], []
@@ -1107,10 +1109,13 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
 
                 session.flush()
 
+                # Record initial price event before scoring so exceptions can't lose it.
+                # price_usd_equiv is pre-computed (_init_usd_equiv) and already set on the object.
+                if listing_obj.first_seen == now:
+                    _record_price_event(session, listing_obj, "initial", now)
+
                 if seller_blocked:
                     # Preserve the "Vendedor bloqueado" deal_reason — skip scoring entirely.
-                    if listing_obj.first_seen == now:
-                        _record_price_event(session, listing_obj, "initial", now)
                     session.commit()
                     continue
 
@@ -1131,10 +1136,6 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         deal_count += 1
                     elif not score_result["is_deal"]:
                         listing_obj.is_deal = False
-
-                # Record initial price event for new listings only
-                if listing_obj.first_seen == now:
-                    _record_price_event(session, listing_obj, "initial", now)
 
                 session.commit()
 

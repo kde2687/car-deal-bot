@@ -86,9 +86,9 @@ ONLY_PRIVATE_SELLERS = os.getenv("ONLY_PRIVATE_SELLERS", "true").lower() == "tru
 USD_TO_ARS_RATE = float(os.getenv("USD_TO_ARS_RATE", "1350"))
 
 # Market reference window and decay
-MARKET_HISTORY_DAYS  = int(os.getenv("MARKET_HISTORY_DAYS", "365"))   # 1 año de historia
+MARKET_HISTORY_DAYS  = int(os.getenv("MARKET_HISTORY_DAYS", "180"))   # 6 meses (era 365 — demasiado para inflación 140% anual)
 MARKET_HALF_LIFE_DAYS = int(os.getenv("MARKET_HALF_LIFE_DAYS", "14")) # peso 0.5 a los 14 días (era 30 — muy largo para inflación 140% anual)
-MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "40000")) # ±40k km para referencia exacta
+MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "20000")) # ±20k km para referencia exacta (era 40k — introducía ±8-12% ruido por km)
 
 # MercadoLibre API credentials
 ML_APP_ID = os.getenv("ML_APP_ID", "")

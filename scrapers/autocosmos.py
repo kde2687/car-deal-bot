@@ -10,6 +10,15 @@ import config
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize(model: str) -> str:
+    """Lazy import of scorer._normalize_model to avoid circular imports at module load."""
+    try:
+        from scorer import _normalize_model
+        return _normalize_model(model).title() if model else model
+    except Exception:
+        return model
+
 AC_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -137,9 +146,9 @@ class AutocosmosScraper:
                     location_text = txt
                     continue
 
-                if "$" in txt or re.search(r"\d{6,}", txt):
+                if "$" in txt or re.search(r"\d{7,}", txt):
                     price_val = self._parse_price(txt)
-                    if price_val and price_val > 100_000:
+                    if price_val and price_val >= 1_000_000:  # ARS floor: < 1M is a fragment, not a price
                         price_ars = price_val
 
             # Primary model source: URL slug (most reliable for AC).
@@ -157,6 +166,10 @@ class AutocosmosScraper:
                 m = re.match(r"^\w[\w-]* (.+?) usado", title_attr, re.IGNORECASE)
                 if m:
                     model_name = m.group(1)
+
+            # Normalize model to match scorer's _normalize_model() so market reference
+            # lookups find the same base model name (e.g. "Corolla 2.0 XEI" → "Corolla")
+            model_name = _normalize(model_name)
 
             # Apply filters
             if year and year < self.min_year:
