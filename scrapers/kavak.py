@@ -194,7 +194,7 @@ class KavakScraper:
         async with httpx.AsyncClient(
             headers=self._HEADERS, follow_redirects=True, timeout=30.0
         ) as client:
-            for page_num in range(1, 26):
+            for page_num in range(1, 20):
                 url = f"{self.BASE_URL}?page={page_num}"
                 logger.info(f"Kavak page {page_num}: {url}")
                 try:
