@@ -170,7 +170,13 @@ async def _check_seller(
         if "car_dealer" in item_tags or "brand" in item_tags:
             return seller_id, f"item tag: {[t for t in item_tags if t in ('car_dealer','brand')]}", ref_price
 
-        # Signal 1c: description text contains dealer keywords
+        # Signal 1c: item title contains dealer keywords
+        title_lower = (data.get("title") or "").lower()
+        if any(kw in title_lower for kw in _DEALER_NICKNAME_KEYWORDS):
+            matched_kw = next(kw for kw in _DEALER_NICKNAME_KEYWORDS if kw in title_lower)
+            return seller_id, f"título contiene '{matched_kw}'", ref_price
+
+        # Signal 1d: description text contains dealer keywords
         resp_desc = await client.get(
             f"{ML_API}/items/{mla_id}/descriptions", headers=auth, timeout=15.0
         )
@@ -179,8 +185,16 @@ async def _check_seller(
             if isinstance(descs, list):
                 for desc in descs:
                     text = (desc.get("plain_text") or desc.get("text") or "").lower()
-                    if any(kw in text for kw in ("concesionaria", "concesionario", "datos de la concesion", "agencia de autos")):
-                        return seller_id, "descripción menciona concesionaria", ref_price
+                    _DESC_DEALER_KW = (
+                        "concesionaria", "concesionario", "agencia de autos",
+                        "agencia de vehiculos", "agencia de vehículos",
+                        "somos una agencia", "somos concesionarios",
+                        "datos de la concesion", "stock de vehiculos",
+                        "ventas de vehiculos", "automotores",
+                    )
+                    if any(kw in text for kw in _DESC_DEALER_KW):
+                        matched = next(kw for kw in _DESC_DEALER_KW if kw in text)
+                        return seller_id, f"descripción menciona '{matched}'", ref_price
 
         # Signal 2: count active car listings
         resp2 = await client.get(
@@ -532,6 +546,17 @@ async def enrich_ml_new_listings(listing_ids: list[str]) -> int:
         logger.error(f"ML enrich DB write failed: {e}")
     finally:
         session.close()
+
+    # Secondary HTML pass: scan listing page text for concesionaria signals and
+    # extract ML's reference price from the price-distribution widget.
+    # Only run for non-agency listings to avoid wasting bandwidth.
+    agency_lids_set = {lid for lid, _, _ in agencies_found}
+    html_pairs = [(lid, mla_id) for lid, mla_id in pairs if lid not in agency_lids_set]
+    if html_pairs:
+        try:
+            await _enrich_reference_prices(html_pairs)
+        except Exception as e:
+            logger.warning(f"ML enrich HTML pass failed: {e}")
 
     return len(agencies_found)
 
