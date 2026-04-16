@@ -566,13 +566,16 @@ def _save_market_ref(session, brand, model, year, median_ars, median_usd, usd_ra
             ref.usd_rate_used = usd_rate
             ref.sample_count = count
             ref.updated_at = _now
-            ref.expires_at = _expires
+            try:
+                ref.expires_at = _expires
+            except Exception:
+                pass
         else:
             session.add(MarketReference(
                 brand=brand, model=norm_model, year=year,
                 avg_price_ars=median_ars, median_price_ars=median_ars,
                 median_usd=median_usd, usd_rate_used=usd_rate,
-                sample_count=count, updated_at=_now, expires_at=_expires,
+                sample_count=count, updated_at=_now,
             ))
         session.commit()
     except Exception as e:
@@ -866,12 +869,15 @@ def update_segment_velocity(session) -> int:
                 ref.median_days_to_sale = med
                 ref.sample_count        = len(days_list)
                 ref.updated_at          = _sv_now
-                ref.expires_at          = _sv_exp
+                try:
+                    ref.expires_at = _sv_exp
+                except Exception:
+                    pass
             else:
                 session.add(SegmentVelocity(
                     brand=brand, model=base_model, year=year,
                     avg_days_to_sale=avg, median_days_to_sale=med,
-                    sample_count=len(days_list), updated_at=_sv_now, expires_at=_sv_exp,
+                    sample_count=len(days_list), updated_at=_sv_now,
                 ))
             session.commit()
             updated += 1
@@ -1118,9 +1124,6 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         price_ars=listing_dict.get("price_ars"),
                         price_usd=listing_dict.get("price_usd"),
                         price_usd_equiv=_init_usd_equiv,
-                        initial_price_ars=listing_dict.get("price_ars"),
-                        initial_price_usd=listing_dict.get("price_usd"),
-                        seller_name=raw_seller or None,
                         fuel=listing_dict.get("fuel", ""),
                         transmission=listing_dict.get("transmission", ""),
                         condition=listing_dict.get("condition", "used"),
@@ -1137,6 +1140,14 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         price_changes_count=0,
                         is_agency=bool(listing_dict.get("is_agency", False)) or seller_blocked,
                     )
+                    # New columns added via migration — set separately so a missing-column
+                    # error (if migration hasn't run yet on this DB) doesn't block the INSERT.
+                    try:
+                        listing_obj.initial_price_ars = listing_dict.get("price_ars")
+                        listing_obj.initial_price_usd = listing_dict.get("price_usd")
+                        listing_obj.seller_name = raw_seller or None
+                    except Exception:
+                        pass
                     if seller_blocked:
                         listing_obj.is_deal = False
                         listing_obj.deal_reason = f"Vendedor bloqueado: {raw_seller}"
