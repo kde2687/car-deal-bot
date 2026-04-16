@@ -185,7 +185,7 @@ async def _run_scan_inner(telegram_alerter=None):
             from scrapers.ml_enrich import check_ml_listing_statuses
             sold_count = await check_ml_listing_statuses()
             if sold_count:
-                logger.info(f"ML status check: marked {sold_count} closed/paused listings as sold")
+                logger.info(f"ML status check: marked {sold_count} closed/deleted listings as sold")
             else:
                 logger.debug("ML status check: no inactive listings found")
         except Exception as e:
@@ -223,6 +223,28 @@ async def _run_scan_inner(telegram_alerter=None):
                 _rescore_session.close()
             except Exception:
                 pass
+
+    # Diagnostic: source breakdown of active listings and deals in DB
+    try:
+        from database import SessionLocal as _SL2, Listing as _L
+        _diag_session = _SL2()
+        try:
+            for _src in ("mercadolibre", "autocosmos", "kavak"):
+                _base = _diag_session.query(_L).filter(
+                    _L.source == _src, _L.status == "active", _L.hidden != True
+                )
+                _tot      = _base.count()
+                _agencies = _base.filter(_L.is_agency == True).count()
+                _deals    = _base.filter(_L.is_agency != True, _L.is_deal == True).count()
+                if _tot > 0:
+                    logger.info(
+                        f"DB active [{_src}]: {_tot} listings "
+                        f"({_deals} deals, {_agencies} agencies)"
+                    )
+        finally:
+            _diag_session.close()
+    except Exception as _e:
+        logger.debug(f"Source diagnostic failed: {_e}")
 
     # Individual per-scan alerts disabled — digest sent daily at 8am via scheduler
 

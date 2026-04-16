@@ -40,7 +40,11 @@ logger = logging.getLogger(__name__)
 ML_API = "https://api.mercadolibre.com"
 ML_CARS_CATEGORY = "MLA1743"   # Autos y Camionetas — Argentina
 DEALER_THRESHOLD = 3           # sellers with >=3 active car listings = dealer
-DEALER_COMPLETED_THRESHOLD = 20   # >20 completed car sales = professional dealer
+DEALER_COMPLETED_THRESHOLD = 100  # raised from 20 — 20 was too low: counts ALL ML
+                                   # transactions (any category), so a casual seller
+                                   # who sold 20 clothes/electronics over 2 years was
+                                   # incorrectly flagged as a car dealer. 100 requires
+                                   # sustained high-volume selling to trigger.
 DEALER_ACCOUNT_AGE_YEARS = 2      # account older than 2 years + high sales = dealer
 
 # Keywords in seller nickname that indicate a dealership.
@@ -899,7 +903,13 @@ async def check_ml_listing_statuses() -> int:
                             id_to_status[item_id] = status
                 for db_id, mla_id in batch:
                     status = id_to_status.get(mla_id)
-                    if status and status != "active":
+                    # Only treat terminal statuses as sold.
+                    # "paused" = seller temporarily paused the listing (not sold).
+                    # "under_review" = ML moderation in progress (not sold).
+                    # These will be handled naturally by _mark_sold_listings if
+                    # they disappear from search results for 24+ hours.
+                    # "closed" and "not_found" (404) are definitively gone.
+                    if status in ("closed", "not_found"):
                         inactive.append((db_id, status))
             except Exception as e:
                 logger.debug(f"ML status batch error: {e}")
