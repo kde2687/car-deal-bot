@@ -1038,11 +1038,46 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                 seller_blocked = False  # set in the new-listing branch below
 
                 if existing:
-                    if existing.hidden or existing.is_agency:
+                    if existing.hidden:
                         existing.last_seen = now
                         existing.is_deal = False   # clear stale deal flag so unhide shows current market state
                         session.commit()
                         continue
+                    if existing.is_agency:
+                        # Re-evaluate ML listings flagged only by Signal 3d (transaction count).
+                        # DEALER_COMPLETED_THRESHOLD was raised from 20 → 100 because the old
+                        # threshold counted ALL ML transactions (any category), not just cars.
+                        # Listings flagged only by that signal have deal_reason containing
+                        # "vendedor profesional: N ventas" but NOT the reliable signals
+                        # (tienda oficial, autos en venta activos, prefijo de agencia, etc.).
+                        # Clear the stale flag and re-queue for enrich with the corrected threshold.
+                        _reason = existing.deal_reason or ""
+                        _is_signal3d_only = (
+                            existing.source == "mercadolibre"
+                            and "vendedor profesional" in _reason
+                            and "autos en venta activos" not in _reason
+                            and "tienda oficial" not in _reason
+                            and "prefijo de agencia" not in _reason
+                            and "título contiene" not in _reason
+                            and "permalink" not in _reason
+                            and "item tag" not in _reason
+                            and "descripción menciona" not in _reason
+                        )
+                        if _is_signal3d_only:
+                            # Un-flag and fall through to normal scoring + re-enrich
+                            existing.is_agency = False
+                            existing.deal_reason = None
+                            new_ml_ids.append(listing_id)
+                            logger.debug(
+                                f"Re-evaluating Signal 3d agency: {listing_id} "
+                                f"(was: {_reason[:60]})"
+                            )
+                            # Falls through to the normal existing-listing update below
+                        else:
+                            existing.last_seen = now
+                            existing.is_deal = False
+                            session.commit()
+                            continue
 
                     # Enrich listing_dict with market signals from existing DB row
                     listing_dict = dict(listing_dict)
