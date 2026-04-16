@@ -214,7 +214,7 @@ def create_app() -> Flask:
                 Listing.is_agency != True,
             )
             query = _apply_filters(query, **f)
-            sort = f.get("sort", "score_desc")
+            sort = f.get("sort", "discount_desc")
             if sort == "discount_desc":
                 query = query.order_by(Listing.discount_pct.desc().nullslast())
             elif sort == "price_asc":
@@ -226,11 +226,24 @@ def create_app() -> Flask:
             else:
                 query = query.order_by(Listing.score.desc())
 
-            all_rows = query.all()
-            all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
-            total = len(all_rows)
-            pages = max(1, math.ceil(total / 20))
-            listings = all_rows[(page - 1) * 20: page * 20]
+            # Use SQL-level pagination when the default origin is active (no Python
+            # distance recomputation needed) to avoid loading thousands of rows.
+            origin_lower = (f["origin_city"] or "").lower().strip()
+            needs_python_filter = bool(
+                f["max_distance"] is not None
+                and origin_lower
+                and "darregueira" not in origin_lower
+            )
+            if needs_python_filter:
+                all_rows = query.all()
+                all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
+                total = len(all_rows)
+                pages = max(1, math.ceil(total / 20))
+                listings = all_rows[(page - 1) * 20: page * 20]
+            else:
+                total = query.count()
+                pages = max(1, math.ceil(total / 20))
+                listings = query.offset((page - 1) * 20).limit(20).all()
 
             last_updated = session.query(func.max(Listing.last_seen)).scalar()
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -282,11 +295,22 @@ def create_app() -> Flask:
             else:
                 query = query.order_by(Listing.score.desc())
 
-            all_rows = query.all()
-            all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
-            total = len(all_rows)
-            pages = max(1, math.ceil(total / 20))
-            listings = all_rows[(page - 1) * 20: page * 20]
+            origin_lower = (f["origin_city"] or "").lower().strip()
+            needs_python_filter = bool(
+                f["max_distance"] is not None
+                and origin_lower
+                and "darregueira" not in origin_lower
+            )
+            if needs_python_filter:
+                all_rows = query.all()
+                all_rows = _apply_distance_filter(all_rows, f["origin_city"], f["max_distance"])
+                total = len(all_rows)
+                pages = max(1, math.ceil(total / 20))
+                listings = all_rows[(page - 1) * 20: page * 20]
+            else:
+                total = query.count()
+                pages = max(1, math.ceil(total / 20))
+                listings = query.offset((page - 1) * 20).limit(20).all()
 
             last_updated = session.query(func.max(Listing.last_seen)).scalar()
             today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -585,7 +609,13 @@ def create_app() -> Flask:
 
     @app.route("/admin/scan", methods=["POST"])
     def trigger_scan():
-        """Trigger an immediate scan in a background thread."""
+        """Trigger an immediate scan in a background thread.
+        TOKEN NOTE: The dashboard 'Actualizar' button calls this endpoint without
+        a token.  When ADMIN_TOKEN is set in production, those calls will receive
+        a 401.  To allow the button to work, either leave ADMIN_TOKEN unset (dev
+        mode) or prefix the ngrok/public URL with a reverse-proxy that injects
+        the X-Admin-Token header.  Alternatively pass ?token=<value> in the URL.
+        """
         err = _check_admin()
         if err: return err
         nonlocal _scan_running
@@ -616,11 +646,31 @@ def create_app() -> Flask:
 
     @app.route("/unhide/<path:listing_id>", methods=["POST"])
     def unhide_listing(listing_id):
+        """Un-hide a listing that was manually hidden.
+        Only clears the hidden flag — does NOT clear is_agency so that agency
+        listings accidentally unhidden don't sneak back into the deals view.
+        """
         session = SessionLocal()
         try:
             listing = session.query(Listing).filter_by(id=listing_id).first()
             if listing:
                 listing.hidden = False
+                # Do NOT unconditionally reset is_agency here — a listing may
+                # have been flagged as an agency AND hidden; clearing is_agency
+                # would wrongly let it appear as a deal again.  Agency un-flag
+                # requires an explicit /unmark_agency endpoint.
+                session.commit()
+            return ("", 204)
+        finally:
+            session.close()
+
+    @app.route("/unmark_agency/<path:listing_id>", methods=["POST"])
+    def unmark_agency(listing_id):
+        """Explicitly remove the agency flag from a listing (separate from unhide)."""
+        session = SessionLocal()
+        try:
+            listing = session.query(Listing).filter_by(id=listing_id).first()
+            if listing:
                 listing.is_agency = False
                 session.commit()
             return ("", 204)
@@ -647,6 +697,60 @@ def create_app() -> Flask:
                 all_origin_cities=sorted(CITY_COORDS.keys()),
                 usd_rate=config.get_usd_mep_rate(),
                 view="hidden")
+        finally:
+            session.close()
+
+    @app.route("/sold")
+    def sold_listings():
+        """Historial de listings vendidos — útil para ver qué deals se perdieron."""
+        session = SessionLocal()
+        try:
+            page = max(1, request.args.get("page", 1, type=int))
+            f = _read_filters()
+
+            query = session.query(Listing).filter(
+                Listing.status == "sold",
+                Listing.hidden != True,
+            )
+            query = _apply_filters(query, **f)
+            # Default sort for sold: most recently sold first
+            sort = f.get("sort", "score_desc")
+            if sort == "discount_desc":
+                query = query.order_by(Listing.discount_pct.desc().nullslast())
+            elif sort == "price_asc":
+                query = query.order_by(Listing.price_ars.asc().nullslast())
+            elif sort == "price_desc":
+                query = query.order_by(Listing.price_ars.desc())
+            elif sort == "newest":
+                query = query.order_by(Listing.first_seen.desc())
+            else:
+                # Default for sold view: most recently sold
+                query = query.order_by(Listing.sold_at.desc().nullslast())
+
+            total = query.count()
+            pages = max(1, math.ceil(total / 20))
+            listings = query.offset((page - 1) * 20).limit(20).all()
+
+            last_updated = session.query(func.max(Listing.sold_at)).filter(
+                Listing.status == "sold"
+            ).scalar()
+            unique_brands = [r[0] for r in session.query(Listing.brand).filter(
+                Listing.status == "sold").distinct().order_by(Listing.brand).all() if r[0]]
+            unique_cities = [r[0] for r in session.query(Listing.seller_city).filter(
+                Listing.status == "sold",
+                Listing.seller_city != None, Listing.seller_city != ""
+            ).distinct().order_by(Listing.seller_city).all() if r[0]]
+            origin_coords = city_to_coords(f["origin_city"]) or (ORIGIN_LAT, ORIGIN_LON)
+
+            return render_template("index.html",
+                listings=listings, total=total, page=page, pages=pages,
+                filters=_filters_for_template(f), last_updated=last_updated,
+                new_today=0, avg_score=0,
+                sources=[], unique_brands=unique_brands, unique_cities=unique_cities,
+                origin_name=f["origin_city"] or ORIGIN_NAME,
+                origin_coords=origin_coords, all_origin_cities=sorted(CITY_COORDS.keys()),
+                usd_rate=config.get_usd_mep_rate(),
+                view="sold")
         finally:
             session.close()
 
@@ -787,10 +891,17 @@ def create_app() -> Flask:
                     "thumbnail": d.thumbnail,
                     "score": d.score,
                     "discount_pct": d.discount_pct,
+                    "market_price_ars": d.market_price_ars,
+                    "ref_type": d.ref_type,
+                    "confidence_index": d.confidence_index,
+                    "percentile_rank": d.percentile_rank,
+                    "seller_city": d.seller_city,
+                    "distance_km": d.distance_km,
                     "is_deal": d.is_deal,
                     "deal_reason": d.deal_reason,
                     "first_seen": d.first_seen.isoformat() if d.first_seen else None,
                     "last_seen": d.last_seen.isoformat() if d.last_seen else None,
+                    "price_changes_count": d.price_changes_count,
                 })
             return jsonify(result)
         finally:

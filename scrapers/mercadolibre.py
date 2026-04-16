@@ -124,7 +124,7 @@ class MercadoLibreScraper:
                 if attr_id == "VEHICLE_YEAR":
                     try:
                         y = int(val)
-                        if 1990 <= y <= 2030:
+                        if 1990 <= y <= datetime.utcnow().year + 2:
                             year = y
                     except (ValueError, TypeError):
                         pass
@@ -167,10 +167,17 @@ class MercadoLibreScraper:
             # Brand / model
             brand = brand_attr or (next(iter(title.split()), "") if title else "")
             model = model_attr or title
-            if model.lower().startswith(brand.lower()):
+            if brand and model.lower().startswith(brand.lower()):
                 model = model[len(brand):].strip()
             from scorer import _normalize_model as _nm
-            model = _nm(model).title() if model else model
+            # _nm may return "" for purely numeric models (e.g. Peugeot "208");
+            # fall back to first token of the raw model string so the field is never empty.
+            if model:
+                nm_result = _nm(model)
+                model = (nm_result or model.split()[0]).title()
+            # Guard: if model is still empty use first title token as last resort
+            if not model and title:
+                model = title.split()[0].title()
 
             # Capture ML's original_price (before seller discount) and sale_price
             # as early market reference signals before enrichment runs
@@ -249,6 +256,8 @@ class MercadoLibreScraper:
             offset = 0
             limit = 50
             max_results = 1000  # ML API hard cap per query
+            transient_errors = 0  # guard against infinite retry on persistent server errors
+            MAX_TRANSIENT_ERRORS = 3
 
             window_filters = (
                 f"&VEHICLE_YEAR-from={yr_from}"
@@ -280,13 +289,39 @@ class MercadoLibreScraper:
                             f"switching to HTML fallback"
                         )
                         return None  # signal to caller: fall back to HTML
+                    if resp.status_code in (500, 502, 503, 504):
+                        # Transient server-side error — retry after short delay instead of
+                        # aborting the entire page window (which would silently drop all
+                        # listings at this offset and beyond).
+                        transient_errors += 1
+                        if transient_errors > MAX_TRANSIENT_ERRORS:
+                            logger.warning(
+                                f"ML API {resp.status_code} persists for {brand_name} "
+                                f"after {MAX_TRANSIENT_ERRORS} retries — skipping window"
+                            )
+                            break
+                        logger.warning(
+                            f"ML API {resp.status_code} (transient) for {brand_name} "
+                            f"offset {offset} — retrying in 10s ({transient_errors}/{MAX_TRANSIENT_ERRORS})"
+                        )
+                        await asyncio.sleep(10)
+                        continue
                     if resp.status_code != 200:
                         logger.warning(f"ML API {resp.status_code} for {brand_name} offset {offset}")
                         break
                     data = resp.json()
+                    transient_errors = 0  # reset on successful response
                 except Exception as e:
-                    logger.warning(f"ML API error for {brand_name}: {e}")
-                    break
+                    transient_errors += 1
+                    if transient_errors > MAX_TRANSIENT_ERRORS:
+                        logger.warning(
+                            f"ML API network error persists for {brand_name} "
+                            f"after {MAX_TRANSIENT_ERRORS} retries: {e} — skipping window"
+                        )
+                        break
+                    logger.warning(f"ML API error for {brand_name}: {e} — retrying in 5s ({transient_errors}/{MAX_TRANSIENT_ERRORS})")
+                    await asyncio.sleep(5)
+                    continue
 
                 results = data.get("results", [])
                 paging = data.get("paging", {})
@@ -472,11 +507,11 @@ class MercadoLibreScraper:
             km = None
             for txt in attr_texts:
                 # Match standalone 4-digit year OR year followed by extra text ("2020 modelo")
-                year_m = re.search(r'\b(19\d{2}|20[012]\d)\b', txt)
+                year_m = re.search(r'\b(19\d{2}|20[0-3]\d)\b', txt)
                 if year_m and not year:
                     try:
                         y = int(year_m.group(1))
-                        if 1990 <= y <= 2030:
+                        if 1990 <= y <= datetime.utcnow().year + 2:
                             year = y
                     except ValueError:
                         pass
@@ -486,11 +521,11 @@ class MercadoLibreScraper:
                 # Last-resort: try to extract year from card title text
                 title_el = li_el.select_one(".poly-component__title, h2, [class*=title]")
                 title_txt = title_el.get_text(strip=True) if title_el else ""
-                year_m2 = re.search(r'\b(19\d{2}|20[012]\d)\b', title_txt)
+                year_m2 = re.search(r'\b(19\d{2}|20[0-3]\d)\b', title_txt)
                 if year_m2:
                     try:
                         y = int(year_m2.group(1))
-                        if 1990 <= y <= 2030:
+                        if 1990 <= y <= datetime.utcnow().year + 2:
                             year = y
                     except ValueError:
                         pass
@@ -518,10 +553,17 @@ class MercadoLibreScraper:
 
             model = title
             brand_lower = brand.lower()
-            if model.lower().startswith(brand_lower):
+            if brand_lower and model.lower().startswith(brand_lower):
                 model = model[len(brand_lower):].strip()
             from scorer import _normalize_model as _nm
-            model = _nm(model).title() if model else model
+            # _nm may return "" for purely numeric models (e.g. Peugeot "208");
+            # fall back to first token of the raw model string so the field is never empty.
+            if model:
+                nm_result = _nm(model)
+                model = (nm_result or model.split()[0]).title()
+            # Guard: if model is still empty use first title token as last resort
+            if not model and title:
+                model = title.split()[0].title()
             return {
                 "id": f"meli:{item_id}",
                 "source": "mercadolibre",

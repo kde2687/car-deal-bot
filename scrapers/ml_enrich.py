@@ -3,7 +3,7 @@ Post-scan enrichment for MercadoLibre listings.
 Uses the public ML API to detect dealers via multiple signals:
 
   1. official_store_id  — non-null → always a store/agency
-  2. active listing count — seller with >DEALER_THRESHOLD active car listings
+  2. active listing count — seller with >=DEALER_THRESHOLD active car listings
   3. seller_reputation  — high transaction count + old account → likely dealer
 
 ML API (authenticated):
@@ -39,11 +39,16 @@ logger = logging.getLogger(__name__)
 
 ML_API = "https://api.mercadolibre.com"
 ML_CARS_CATEGORY = "MLA1743"   # Autos y Camionetas — Argentina
-DEALER_THRESHOLD = 3           # sellers with >3 active car listings = dealer
+DEALER_THRESHOLD = 3           # sellers with >=3 active car listings = dealer
 DEALER_COMPLETED_THRESHOLD = 20   # >20 completed car sales = professional dealer
 DEALER_ACCOUNT_AGE_YEARS = 2      # account older than 2 years + high sales = dealer
 
-# Keywords in seller nickname that indicate a dealership
+# Keywords in seller nickname that indicate a dealership.
+# IMPORTANT: all entries are matched as substrings of the lowercased nickname.
+# Keep entries specific enough to avoid false positives:
+#   - "auto" was REMOVED — it matches "automático", "autónomo", "autobiografía", etc.
+#     Use "autos" (plural) and "automotor*" variants instead.
+#   - "import" kept — "importadora", "importados" are dealer-specific in AR context.
 _DEALER_NICKNAME_KEYWORDS = (
     "automotor", "automotores", "automotriz", "automoviles", "automóviles",
     "concesion", "concesionaria", "concesionario",
@@ -161,20 +166,136 @@ async def _check_seller(
         # Extract ML's market reference price now (reuses item data, +1 /prices call)
         ref_price = await _get_ml_ref_price(client, mla_id, data, auth)
 
+        # Signal 0: check BlockedSeller table — manually flagged agencies.
+        # This runs before all other signals to short-circuit expensive API calls.
+        # The seller nickname is matched case-insensitively against the stored
+        # normalised-lowercase names.  We defer the user fetch to Signal 3 so we
+        # first try a cheap DB hit using the seller_id from item data.
+        try:
+            from database import SessionLocal as _SL, BlockedSeller as _BS
+            _session = _SL()
+            try:
+                # We don't have the nickname yet — use the /users/{id} response cached
+                # later in Signal 3.  Do a quick pre-check using seller_id as a string
+                # in case the operator blocked by numeric ID stored as a string.
+                seller_id_str = str(seller_id)
+                _blocked_by_id = _session.query(_BS).filter(
+                    _BS.seller_name == seller_id_str
+                ).first()
+                if _blocked_by_id:
+                    return seller_id, f"vendedor bloqueado manualmente (id={seller_id})", ref_price
+            finally:
+                _session.close()
+        except Exception:
+            pass
+
         # Signal 1: official store (always an agency)
         if data.get("official_store_id") is not None:
             return seller_id, f"tienda oficial ML (store_id={data['official_store_id']})", ref_price
+
+        # Signal 1-permalink: permalink contains "/tienda/" or "/official-stores/"
+        # ML uses these URL patterns exclusively for official store / dealer listings.
+        permalink = (data.get("permalink") or "").lower()
+        if "/tienda/" in permalink or "/official-stores/" in permalink:
+            return seller_id, f"permalink de tienda oficial ('{permalink[:60]}')", ref_price
 
         # Signal 1b: item-level tags (car_dealer, brand, etc.)
         item_tags = data.get("tags") or []
         if "car_dealer" in item_tags or "brand" in item_tags:
             return seller_id, f"item tag: {[t for t in item_tags if t in ('car_dealer','brand')]}", ref_price
 
-        # Signal 1c: item title contains dealer keywords
+        # Signal 1c: item title contains explicit dealer keywords.
+        # Uses a SEPARATE (stricter) keyword set — not _DEALER_NICKNAME_KEYWORDS —
+        # because title keywords must be unambiguous as standalone words in context:
+        #   - "import" is excluded: "Toyota Hilux importada" would be a false positive.
+        #   - "autos" is excluded: "compra venta de autos usados" — too generic.
+        #   - "s.a.", "srl", etc. are excluded: too short/ambiguous as title substrings.
+        #   - "usados" IS included as a phrase-level check (see below).
+        # All checks are word-boundary aware to reduce substring false positives.
         title_lower = (data.get("title") or "").lower()
-        if any(kw in title_lower for kw in _DEALER_NICKNAME_KEYWORDS):
-            matched_kw = next(kw for kw in _DEALER_NICKNAME_KEYWORDS if kw in title_lower)
+        _TITLE_DEALER_KEYWORDS = (
+            "concesionaria", "concesionario", "concesion",
+            "agencia", "agencias",
+            "automotores", "automotriz",
+            "cocheria", "cochería",
+            "multimarca",
+            "dealers", "dealer",
+        )
+        if any(kw in title_lower for kw in _TITLE_DEALER_KEYWORDS):
+            matched_kw = next(kw for kw in _TITLE_DEALER_KEYWORDS if kw in title_lower)
             return seller_id, f"título contiene '{matched_kw}'", ref_price
+
+        # Signal 1e: dealer store-name prefix BEFORE the brand in title
+        # (e.g. "LOB Peugeot 2008..." or "ABC Toyota Corolla...").
+        # Private sellers almost always start with brand or model; dealers prefix
+        # their store code/abbreviation.
+        # Heuristic: first word is a short alphabetic token (2-5 chars), not a brand,
+        # not a common Spanish adjective/descriptor, and a car brand appears in words 2-4.
+        # MAX LENGTH IS 5 (not 6) — "Toyota" and "Suzuki" are 6 chars; we must not
+        # accidentally match brand names that appear at position 0 due to a data anomaly.
+        # We also require the first word to be FULLY alphabetic (no digits, no punctuation)
+        # so that "4x4 Toyota..." or "2020 Toyota..." do not trigger.
+        try:
+            import config as _cfg
+            _brands_lower = {b.lower() for b in _cfg.BRANDS_LIST}
+            # Words that private sellers commonly put at the start of titles.
+            # MUST cover all Spanish descriptors ≤5 chars to avoid false positives.
+            _common_prefix_words = {
+                # condition / quality descriptors
+                "usado", "usada", "nueva", "nuevo", "unico", "única", "único",
+                "impecable", "ideal", "excelente", "hermoso", "precioso", "perfecto",
+                "oportunidad", "urgente",
+                # car descriptors ≤5 chars (the key false-positive candidates)
+                "full",   # "Full Toyota..." — private seller highlighting trim level
+                "semi",   # "Semi Toyota..."
+                "gran",   # "Gran Toyota..." (uncommon but possible)
+                "doble",  # "Doble tracción Toyota..."
+                "turbo",  # "Turbo Fiat..."
+                "nafta",  # "Nafta Ford..."
+                "diesel", # "Diesel VW..."
+                "color",  # "Color Toyota..."
+                "super",  # "Super Chevrolet..."
+                "extra",  # "Extra Toyota..."
+                "motor",  # "Motor Toyota..." (unlikely but safe to block)
+                "techo",  # "Techo Toyota..."
+                "gnc",    # "GNC Fiat..." — fuel type prefix
+                "titular", # "Titular Toyota..." — private seller note
+                "con",    # "Con GNC Toyota..."
+                "sin",    # "Sin deuda Ford..."
+                "año",    # "Año 2020 Toyota..."
+                "mas",    # "Mas equipado Ford..."
+                "muy",    # "Muy buen Toyota..."
+                "buen",   # "Buen Toyota..."
+                "bien",   # "Bien Toyota..."
+                "vendo",  # "Vendo Toyota..."
+                "venta",  # "Venta Toyota..."
+                "oferta", # "Oferta Toyota..."
+                "precio", # "Precio Toyota..."
+                "bajo",   # "Bajo km Toyota..."
+                "poco",   # "Poco km Toyota..."
+                "unico",  # duplicate without accent
+                "tomo",   # "Tomo auto Toyota..." (trade-in offer)
+                "permuto",# "Permuto Toyota..."
+            }
+            title_words = title_lower.split()
+            if len(title_words) >= 2:
+                first = title_words[0]
+                # Conditions for a dealer prefix:
+                #   1. Fully alphabetic (no digits, no punctuation like "/", ".")
+                #   2. 2–5 chars (6 would include brand names like Toyota/Suzuki)
+                #   3. Not a known car brand
+                #   4. Not a common descriptor private sellers use
+                #   5. A known brand appears in positions 2–4 of the title
+                if (
+                    first.isalpha()
+                    and 2 <= len(first) <= 5
+                    and first not in _brands_lower
+                    and first not in _common_prefix_words
+                    and any(w in _brands_lower for w in title_words[1:4])
+                ):
+                    return seller_id, f"título con prefijo de agencia antes de la marca ('{first}')", ref_price
+        except Exception:
+            pass
 
         # Signal 1d: description text contains dealer keywords
         resp_desc = await client.get(
@@ -206,7 +327,7 @@ async def _check_seller(
         listing_count = 0
         if resp2.status_code == 200:
             listing_count = resp2.json().get("paging", {}).get("total", 0)
-            if listing_count > DEALER_THRESHOLD:
+            if listing_count >= DEALER_THRESHOLD:
                 return seller_id, f"{listing_count} autos en venta activos", ref_price
 
         # Signal 3: seller reputation — high completed transactions + old account
@@ -229,6 +350,24 @@ async def _check_seller(
             matched_kw = next((kw for kw in _DEALER_NICKNAME_KEYWORDS if kw in nickname), None)
             if matched_kw:
                 return seller_id, f"nickname contiene '{matched_kw}'", ref_price
+
+            # Signal 3c-bis: nickname matches a manually blocked seller (case-insensitive).
+            # The BlockedSeller table stores normalised lowercase names, so we compare
+            # the already-lowercased nickname directly.
+            if nickname:
+                try:
+                    from database import SessionLocal as _SL2, BlockedSeller as _BS2
+                    _session2 = _SL2()
+                    try:
+                        _blocked = _session2.query(_BS2).filter(
+                            _BS2.seller_name == nickname
+                        ).first()
+                        if _blocked:
+                            return seller_id, f"vendedor bloqueado manualmente (nick='{nickname}')", ref_price
+                    finally:
+                        _session2.close()
+                except Exception:
+                    pass
 
             # Signal 3d: high transaction count + old account
             completed = (
@@ -271,9 +410,20 @@ def _extract_ref_price_from_obj(obj, _depth: int = 0) -> Optional[float]:
     """
     Recursively search a nested dict/list for ML's reference price value.
     Returns the first plausible ARS amount (1 000 000 – 2 000 000 000 range).
+
+    Skips sub-trees that are known to contain unrelated prices (seller info,
+    shipping costs, installment details) to avoid returning false reference prices.
     """
     if _depth > 12:
         return None
+
+    # Sub-tree keys that are known to hold non-market prices.  Skipping them
+    # prevents shipping costs, installment amounts, or seller reputation values
+    # from being mistaken for ML's market reference price.
+    _SKIP_KEYS = frozenset({
+        "seller", "shipping", "installments", "fees", "buyer_fees",
+        "seller_fees", "taxes", "cost", "rate", "deals", "promotions",
+    })
 
     if isinstance(obj, dict):
         # Direct key matches for known ML price reference field names
@@ -293,7 +443,9 @@ def _extract_ref_price_from_obj(obj, _depth: int = 0) -> Optional[float]:
                     if currency == "ARS":
                         return float(amount)
 
-        for v in obj.values():
+        for k, v in obj.items():
+            if k in _SKIP_KEYS:
+                continue  # do not descend into non-price sub-trees
             result = _extract_ref_price_from_obj(v, _depth + 1)
             if result:
                 return result
@@ -651,5 +803,140 @@ async def _enrich_reference_prices(pairs: list[tuple[str, str]]) -> None:
     except Exception as e:
         session.rollback()
         logger.error(f"Reference price DB write failed: {e}")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Active listing status verification
+# ---------------------------------------------------------------------------
+
+async def check_ml_listing_statuses() -> int:
+    """
+    Batch-query ML API for the status of all active ML listings in the DB.
+    Marks listings with status != 'active' (e.g. 'closed', 'paused') as sold.
+
+    Fixes the case where ML's search API still returns a listing that is no
+    longer available on the listing page — the scraper keeps refreshing
+    last_seen so _mark_sold_listings never fires.
+
+    ML batch endpoint: GET /items?ids=MLA1,MLA2,...  (max 20 per request)
+    Response: [{code: 200, body: {id, status, ...}}, ...]
+    Returns count of listings marked sold.
+    """
+    from database import PriceHistory
+
+    session = SessionLocal()
+    try:
+        rows = session.query(Listing.id).filter(
+            Listing.source == "mercadolibre",
+            Listing.status == "active",
+            Listing.hidden != True,
+        ).all()
+        db_ids = [r.id for r in rows]
+    finally:
+        session.close()
+
+    if not db_ids:
+        return 0
+
+    pairs = []
+    for lid in db_ids:
+        mla_id = lid.replace("meli:", "")
+        if mla_id.startswith("MLA"):
+            pairs.append((lid, mla_id))
+
+    if not pairs:
+        return 0
+
+    BATCH = 20
+    inactive: list[tuple[str, str]] = []  # (db_id, ml_status)
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for i in range(0, len(pairs), BATCH):
+            batch = pairs[i:i + BATCH]
+            mla_ids_str = ",".join(mla_id for _, mla_id in batch)
+            # Refresh auth headers per-batch so an expired token is renewed automatically
+            # via MLTokenManager rather than failing silently for all remaining batches.
+            try:
+                auth = await get_auth_headers(client)
+            except Exception:
+                auth = {}
+            try:
+                resp = await client.get(
+                    f"{ML_API}/items",
+                    params={"ids": mla_ids_str, "attributes": "id,status"},
+                    headers=auth,
+                    timeout=15.0,
+                )
+                if resp.status_code != 200:
+                    logger.debug(f"ML status batch HTTP {resp.status_code}")
+                    continue
+                results = resp.json()
+                # ML returns one result entry per requested ID, in the same order
+                # as the comma-separated ids parameter.  We use index-based mapping
+                # as a fallback for 404 entries where body.id may be absent.
+                results_list = results if isinstance(results, list) else []
+                id_to_status: dict[str, str] = {}
+                for idx, item in enumerate(results_list):
+                    if not isinstance(item, dict):
+                        continue
+                    item_code = item.get("code")
+                    body = item.get("body") or {}
+                    item_id = body.get("id")
+                    # Try to get item_id from positional mapping when body lacks "id"
+                    # (ML returns empty/error body for 404 items in some API versions).
+                    if not item_id and idx < len(batch):
+                        item_id = batch[idx][1]  # mla_id at same position
+                    if not item_id:
+                        continue
+                    if item_code == 404:
+                        # 404 = listing deleted/not found on ML — treat as inactive.
+                        id_to_status[item_id] = "not_found"
+                    else:
+                        status = body.get("status")
+                        if status:
+                            id_to_status[item_id] = status
+                for db_id, mla_id in batch:
+                    status = id_to_status.get(mla_id)
+                    if status and status != "active":
+                        inactive.append((db_id, status))
+            except Exception as e:
+                logger.debug(f"ML status batch error: {e}")
+            await asyncio.sleep(0.3)
+
+    if not inactive:
+        logger.debug(f"ML status check: all {len(pairs)} listings active")
+        return 0
+
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        marked = 0
+        for db_id, ml_status in inactive:
+            listing = session.query(Listing).filter_by(id=db_id).first()
+            if not listing or listing.status != "active":
+                continue
+            listing.status = "sold"
+            listing.sold_at = now
+            listing.is_deal = False
+            session.add(PriceHistory(
+                listing_id=db_id,
+                price_ars=listing.price_ars,
+                price_usd_equiv=listing.price_usd_equiv,
+                recorded_at=now,
+                days_on_market=(now - listing.first_seen).days if listing.first_seen else 0,
+                event_type="sold",
+            ))
+            marked += 1
+            logger.info(f"ML status check: {db_id} → '{ml_status}' (marked sold)")
+        if marked:
+            session.commit()
+        logger.info(f"ML status check: {marked} inactive listings marked sold out of {len(pairs)} checked")
+        return marked
+    except Exception as e:
+        session.rollback()
+        logger.error(f"ML status check DB write failed: {e}")
+        return 0
     finally:
         session.close()

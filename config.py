@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _usd_mep_cache: dict = {"rate": None, "ts": 0.0}
 _usd_mep_lock = threading.RLock()
-_USD_MEP_FALLBACK = 1300.0  # Actualizado abril 2026 — revisar periódicamente
+_USD_MEP_FALLBACK = 1400.0  # Actualizado abril 2026 (MEP ~$1,394-1,399 al 15-abr-2026)
 _USD_MEP_TTL = 14400  # 4 horas (era 24h — demasiado tiempo en mercado volátil)
 
 
@@ -50,7 +50,7 @@ SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "30"))
 MIN_YEAR = int(os.getenv("MIN_YEAR", "2010"))
 MAX_KM = int(os.getenv("MAX_KM", "200000"))
 MIN_KM  = int(os.getenv("MIN_KM", "200"))      # Mínimo km — descarta 0km/nuevos (lowered from 500)
-BRANDS = os.getenv("BRANDS", "Toyota,Ford,Volkswagen,Chevrolet,Renault,Peugeot,Fiat,Citroen,Nissan,Honda,Hyundai,Kia,Jeep,Dodge,Mitsubishi,Suzuki,MG,Haval,Chery,JAC,BYD,DFSK,Changan,Geely,Jetour")
+BRANDS = os.getenv("BRANDS", "Toyota,Ford,Volkswagen,Chevrolet,Renault,Peugeot,Fiat,Citroen,Nissan,Honda,Hyundai,Kia,Jeep,Dodge,RAM,Mitsubishi,Suzuki,Skoda,MG,Haval,Chery,JAC,BYD,DFSK,Changan,Geely,Jetour")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///deals.db")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "changeme")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
@@ -83,12 +83,12 @@ MAX_PRICE_USD = float(os.getenv("MAX_PRICE_USD", "150000"))     # USD 150.000 m�
 ONLY_PRIVATE_SELLERS = os.getenv("ONLY_PRIVATE_SELLERS", "true").lower() == "true"
 
 # Tipo de cambio — se usa get_usd_mep_rate() en runtime; este es el fallback estático
-USD_TO_ARS_RATE = float(os.getenv("USD_TO_ARS_RATE", "1350"))
+USD_TO_ARS_RATE = float(os.getenv("USD_TO_ARS_RATE", "1400"))
 
 # Market reference window and decay
 MARKET_HISTORY_DAYS  = int(os.getenv("MARKET_HISTORY_DAYS", "180"))   # 6 meses (era 365 — demasiado para inflación 140% anual)
 MARKET_HALF_LIFE_DAYS = int(os.getenv("MARKET_HALF_LIFE_DAYS", "14")) # peso 0.5 a los 14 días (era 30 — muy largo para inflación 140% anual)
-MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "20000")) # ±20k km para referencia exacta (era 40k — introducía ±8-12% ruido por km)
+MARKET_KM_TOLERANCE  = int(os.getenv("MARKET_KM_TOLERANCE", "35000")) # ±35k km para referencia exacta (compromiso: menos ruido que 40k, más comparables que 20k)
 
 # MercadoLibre API credentials
 ML_APP_ID = os.getenv("ML_APP_ID", "")

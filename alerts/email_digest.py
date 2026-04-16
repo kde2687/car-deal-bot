@@ -100,6 +100,10 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
                 Listing.status == "active",
                 Listing.hidden != True,
                 Listing.is_agency != True,
+                # Dedup: only include deals that have NOT been alerted yet.
+                # This prevents the same deal appearing in every digest when
+                # the digest runs multiple times per day.
+                Listing.alerted != True,
             )
         )
         # Distance filter: skip listings with no coords only when MAX_DISTANCE_KM is set
@@ -108,17 +112,22 @@ def send_daily_digest(smtp_user: str, smtp_password: str, recipient: str) -> boo
                 (Listing.distance_km == None) | (Listing.distance_km <= _cfg.MAX_DISTANCE_KM)
             )
         deals = (
-            q.order_by(Listing.discount_pct.desc())
+            q.order_by(Listing.discount_pct.desc().nullslast())
             .limit(10)
             .all()
         )
 
         if not deals:
-            logger.info("Email digest: no deals found, skipping")
+            logger.info("Email digest: no new (unalerted) deals found, skipping")
             return False
 
         import config as cfg
         html = _build_html(deals, dashboard_url=cfg.DASHBOARD_URL)
+
+        # Mark deals as alerted so they don't appear in the next digest
+        for d in deals:
+            d.alerted = True
+        session.commit()
     finally:
         session.close()
     date_str = datetime.now().strftime("%d/%m/%Y")

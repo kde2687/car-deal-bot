@@ -73,7 +73,14 @@ def _normalize_model(model: str) -> str:
 # Market reference
 # ---------------------------------------------------------------------------
 
-MIN_SAMPLE_SIZE = 3   # minimum comparables needed for a market reference (raised from 2 — n=2 medians are statistically unreliable)
+MIN_SAMPLE_SIZE = 2   # minimum comparables for a market reference.
+# Lowered from 3 → 2: with ~2,400 listings spread across ~25 brands × ~5 models × ~5 years,
+# many brand/model/year cells have exactly 2 comparables and never reach MIN_SAMPLE_SIZE=3.
+# This causes systematic false negatives: these listings fall through to broad/curve/brand_fallback
+# (7–10% discount threshold) instead of exact/exact_nokm (4–6%), missing real deals.
+# n=2 medians are the arithmetic mean of the two values — less precise but not invalid.
+# Imprecision is already penalised via the confidence multiplier sqrt(n/4) in score_listing()
+# and the confidence_index. Using MIN_SAMPLE_SIZE=3 was double-penalising small cells.
 
 # Confidence index saturation point — n=30 gives full size_score=1.0
 # Based on SE_median ∝ 1/√n (asymptotic theory of quantile estimators)
@@ -550,19 +557,22 @@ def _save_market_ref(session, brand, model, year, median_ars, median_usd, usd_ra
     norm_model = _normalize_model(model).title() or model
     try:
         ref = session.query(MarketReference).filter_by(brand=brand, model=norm_model, year=year).first()
+        _now = datetime.utcnow()
+        _expires = _now + timedelta(days=7)
         if ref:
             ref.median_price_ars = median_ars
             ref.avg_price_ars = median_ars  # avg_price_ars kept for schema compat
             ref.median_usd = median_usd
             ref.usd_rate_used = usd_rate
             ref.sample_count = count
-            ref.updated_at = datetime.utcnow()
+            ref.updated_at = _now
+            ref.expires_at = _expires
         else:
             session.add(MarketReference(
                 brand=brand, model=norm_model, year=year,
                 avg_price_ars=median_ars, median_price_ars=median_ars,
                 median_usd=median_usd, usd_rate_used=usd_rate,
-                sample_count=count, updated_at=datetime.utcnow(),
+                sample_count=count, updated_at=_now, expires_at=_expires,
             ))
         session.commit()
     except Exception as e:
@@ -705,8 +715,10 @@ def score_listing(session, listing_dict: dict) -> dict:
     except Exception:
         pass  # SegmentVelocity table may not exist yet on fresh deploys
 
-    # Confidence multiplier: full confidence at 4+ samples (was 5 — lowered so n=3
-    # minimum-sample references don't get penalised by 23% unnecessarily)
+    # Confidence multiplier: full confidence at 4+ samples (saturation point intentionally
+    # kept at 4, not at MIN_SAMPLE_SIZE=2, so n=2 references carry a ~29% score penalty
+    # vs zero penalty for n≥4. This preserves correct ranking: a 4-sample exact reference
+    # should rank higher than a 2-sample exact reference with the same discount_pct.)
     confidence  = min(1.0, math.sqrt(sample_count / 4.0)) if sample_count > 0 else 1.0
 
     raw_score   = max(0.0, min(100.0, base_score + km_mod + age_mod + ref_penalty + velocity_boost))
@@ -722,7 +734,7 @@ def score_listing(session, listing_dict: dict) -> dict:
         "exact_yr":       7.0,    # ±1 año, sin filtro km — antes "exact_nokm" (Pass 2)
         "broad":          7.0,    # ±2 años, sin filtro km
         "curve":          9.0,    # curva de depreciación interpolada
-        "brand_fallback": 12.0,   # misma marca, cualquier modelo — baja precisión (raised: noisy ref)
+        "brand_fallback": 10.0,   # misma marca, cualquier modelo — baja precisión
         "ml_model":       7.0,    # modelo ML hedónico (controla brand+model+year+km)
     }
     base_min = _deal_min_discount.get(ref_type, 100.0)
@@ -847,16 +859,19 @@ def update_segment_velocity(session) -> int:
             ref = session.query(SegmentVelocity).filter_by(
                 brand=brand, model=base_model, year=year
             ).first()
+            _sv_now = datetime.utcnow()
+            _sv_exp = _sv_now + timedelta(days=7)
             if ref:
-                ref.avg_days_to_sale   = avg
+                ref.avg_days_to_sale    = avg
                 ref.median_days_to_sale = med
-                ref.sample_count       = len(days_list)
-                ref.updated_at         = datetime.utcnow()
+                ref.sample_count        = len(days_list)
+                ref.updated_at          = _sv_now
+                ref.expires_at          = _sv_exp
             else:
                 session.add(SegmentVelocity(
                     brand=brand, model=base_model, year=year,
                     avg_days_to_sale=avg, median_days_to_sale=med,
-                    sample_count=len(days_list), updated_at=datetime.utcnow(),
+                    sample_count=len(days_list), updated_at=_sv_now, expires_at=_sv_exp,
                 ))
             session.commit()
             updated += 1
@@ -885,6 +900,8 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
     ).all()
     rescored = 0
     upgraded = 0
+    cold_count = 0
+    ref_type_counts: dict = {}
     for obj in listings:
         try:
             listing_dict = {
@@ -912,6 +929,11 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
             obj.percentile_rank = result.get("percentile_rank")
             obj.ref_type = result.get("ref_type")
             obj.confidence_index = result.get("confidence_index")
+            # Track ref_type distribution for cold-listing visibility
+            rt = result.get("ref_type", "cold")
+            ref_type_counts[rt] = ref_type_counts.get(rt, 0) + 1
+            if rt == "cold":
+                cold_count += 1
             if result["is_deal"] and not obj.is_deal:
                 obj.is_deal = True
                 obj.alerted = False   # reset so Telegram alert fires for this new deal
@@ -928,7 +950,19 @@ def rescore_all_active_listings(session) -> tuple[int, int]:
     except Exception as e:
         session.rollback()
         logger.error(f"Rescore batch commit failed: {e}")
-    logger.info(f"rescore_all_active_listings: {rescored} rescored, {upgraded} new deals")
+    # Log cold listings explicitly — these are potential false negatives.
+    # A high cold_count means many listings have no market reference and cannot
+    # be detected as deals regardless of how cheap they are.
+    ref_dist = ", ".join(f"{k}={v}" for k, v in sorted(ref_type_counts.items()))
+    if cold_count > 0:
+        cold_pct = cold_count / rescored * 100 if rescored else 0
+        logger.warning(
+            f"rescore_all_active_listings: {cold_count}/{rescored} listings are COLD "
+            f"({cold_pct:.0f}%) — no market reference, cannot detect deals. "
+            f"Consider running more scrape cycles to grow the DB. "
+            f"Ref distribution: {ref_dist}"
+        )
+    logger.info(f"rescore_all_active_listings: {rescored} rescored, {upgraded} new deals. Ref dist: {ref_dist}")
     return rescored, upgraded
 
 
@@ -1041,6 +1075,7 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                             f"Resurrection: {existing.id} ({existing.source}) reappeared after sold "
                             f"(was sold {existing.sold_at})"
                         )
+                        _record_price_event(session, existing, "resurrected", now)
                         existing.sold_at = None
                         existing.alerted = False
                     existing.status = "active"  # re-activate if it was marked stale
@@ -1083,6 +1118,9 @@ def process_listings(listings_dicts: list[dict]) -> tuple[int, int, int, list]:
                         price_ars=listing_dict.get("price_ars"),
                         price_usd=listing_dict.get("price_usd"),
                         price_usd_equiv=_init_usd_equiv,
+                        initial_price_ars=listing_dict.get("price_ars"),
+                        initial_price_usd=listing_dict.get("price_usd"),
+                        seller_name=raw_seller or None,
                         fuel=listing_dict.get("fuel", ""),
                         transmission=listing_dict.get("transmission", ""),
                         condition=listing_dict.get("condition", "used"),

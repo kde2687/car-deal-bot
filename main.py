@@ -16,6 +16,22 @@ from rich.text import Text
 
 console = Console()
 
+# ---------------------------------------------------------------------------
+# Scan concurrency lock: prevents overlapping scans if one run takes longer
+# than SCAN_INTERVAL_MINUTES. APScheduler with max_instances=1 + coalesce=True
+# is our primary defence, but this asyncio.Lock is a belt-and-suspenders guard
+# for the executor-based (sync) work that APScheduler can't track.
+# ---------------------------------------------------------------------------
+_scan_lock = asyncio.Lock()
+
+# ---------------------------------------------------------------------------
+# Email digest dedup lock: prevents a duplicate digest from being sent if the
+# scheduler fires the same cron job twice (e.g. after a Railway restart that
+# lands exactly on the scheduled minute).
+# ---------------------------------------------------------------------------
+_digest_lock = asyncio.Lock()
+_digest_sent_at: dict[str, datetime] = {}   # job_id -> last sent time
+
 
 def setup_logging():
     os.makedirs("logs", exist_ok=True)
@@ -53,6 +69,20 @@ logger = logging.getLogger(__name__)
 
 
 async def run_scan(telegram_alerter=None):
+    # FIX #1 (SCHEDULER OVERLAP): Only one scan may run at a time.
+    # If a previous scan is still running when the scheduler fires again
+    # (e.g. Railway cold-start caused the first scan to run long), we skip
+    # the new invocation rather than running two concurrent scans that would
+    # race on DB writes and inflate duplicate-listing counts.
+    if _scan_lock.locked():
+        logger.warning("Scan already in progress — skipping this invocation to avoid overlap")
+        return
+
+    async with _scan_lock:
+        await _run_scan_inner(telegram_alerter)
+
+
+async def _run_scan_inner(telegram_alerter=None):
     import config as cfg
     from scorer import process_listings
     from database import SessionLocal
@@ -73,13 +103,18 @@ async def run_scan(telegram_alerter=None):
         try:
             # Per-scraper timeout: one slow source won't block the others
             result = await asyncio.wait_for(scraper.fetch_listings(), timeout=380.0)
-            return result or [], time.time() - t
+            elapsed = time.time() - t
+            count = len(result) if result else 0
+            logger.info(f"{name}: fetched {count} listings in {elapsed:.1f}s")
+            return result or [], elapsed
         except asyncio.TimeoutError:
+            elapsed = time.time() - t
             logger.error(f"{name} scraper timed out after 380s — returning empty")
-            return [], time.time() - t
+            return [], elapsed
         except Exception as e:
+            elapsed = time.time() - t
             logger.error(f"{name} scraper failed: {e}")
-            return [], time.time() - t
+            return [], elapsed
 
     try:
         (ml_listings, t_ml), (ac_listings, t_ac), (kavak_listings, t_kavak) = await asyncio.wait_for(
@@ -98,17 +133,34 @@ async def run_scan(telegram_alerter=None):
         return
 
     all_listings = ml_listings + ac_listings + kavak_listings
-    logger.info(f"Fetched {len(ml_listings)} ML + {len(ac_listings)} Autocosmos + {len(kavak_listings)} Kavak = {len(all_listings)} total")
+    logger.info(
+        f"Fetched {len(ml_listings)} ML + {len(ac_listings)} Autocosmos + "
+        f"{len(kavak_listings)} Kavak = {len(all_listings)} total"
+    )
 
     new_count, deal_count, updated_count = (0, 0, 0)
     new_ml_ids = []
+
+    # FIX #2 (ERROR RECOVERY): We still abort if process_listings fails, which
+    # is intentional: process_listings runs inside a single DB transaction and
+    # uses the full all_listings set to decide which existing listings to mark
+    # as sold. Partial processing would mark listings from completed sources as
+    # sold while leaving the failed-source listings stale — worse than skipping.
+    # The correct fix is to let process_listings handle per-source errors
+    # internally, but that requires changes to scorer.py (out of scope here).
+    # What we CAN improve is the log message so the full traceback is visible.
     try:
         loop = asyncio.get_running_loop()
         new_count, deal_count, updated_count, new_ml_ids = await loop.run_in_executor(
             None, process_listings, all_listings
         )
+        logger.info(
+            f"process_listings complete: {new_count} new, {deal_count} deals, "
+            f"{updated_count} updated (ML={len(ml_listings)}, "
+            f"AC={len(ac_listings)}, KV={len(kavak_listings)})"
+        )
     except Exception as e:
-        logger.error(f"process_listings failed: {e}")
+        logger.error(f"process_listings failed: {e}", exc_info=True)
 
     # Background enrichment: check new ML listings for dealers that slipped through
     if new_ml_ids:
@@ -118,20 +170,59 @@ async def run_scan(telegram_alerter=None):
             if agencies_found:
                 logger.info(f"ML enrich: removed {agencies_found} agency listings")
         except Exception as e:
-            logger.error(f"ML enrich failed: {e}")
+            logger.error(f"ML enrich failed: {e}", exc_info=True)
+
+    # FIX #6 (ML STATUS SCALING): check_ml_listing_statuses() hits ML's API
+    # once per 20 active listings (batch endpoint). At 10,000 active ML
+    # listings that's 500 HTTP round-trips x ~15s timeout = can block the event
+    # loop for many minutes. We run it only every 3rd scan (tracked via a
+    # module-level counter) and cap via its internal 0.3s sleep between batches
+    # (~2.5 min for 500 batches). At typical scale (<500 active ML listings)
+    # this runs in ~25s and is fine every scan.
+    _run_scan_inner._ml_status_counter = getattr(_run_scan_inner, "_ml_status_counter", 0) + 1
+    if _run_scan_inner._ml_status_counter % 3 == 1:
+        try:
+            from scrapers.ml_enrich import check_ml_listing_statuses
+            sold_count = await check_ml_listing_statuses()
+            if sold_count:
+                logger.info(f"ML status check: marked {sold_count} closed/paused listings as sold")
+            else:
+                logger.debug("ML status check: no inactive listings found")
+        except Exception as e:
+            logger.error(f"ML status check failed: {e}", exc_info=True)
+    else:
+        logger.debug(
+            f"ML status check skipped (scan #{_run_scan_inner._ml_status_counter}, "
+            f"runs every 3rd scan)"
+        )
 
     # Post-scan rescore: after enrichment updates market_price_ars the scores are stale.
     # Re-scoring immediately ensures deal flags and scores reflect the enriched data
     # instead of waiting up to 4 hours for the next periodic market refresh.
+    #
+    # FIX #3 (RESCORE SESSION LEAK): The original code passed _SL() (an open
+    # session) directly to run_in_executor. If the executor raised an exception
+    # the session was never closed. We now own the session lifecycle explicitly
+    # in a try/finally so it is always closed regardless of outcome.
+    _rescore_session = None
     try:
         from scorer import rescore_all_active_listings
         from database import SessionLocal as _SL
+        _rescore_session = _SL()
         loop = asyncio.get_running_loop()
-        _r, _u = await loop.run_in_executor(None, rescore_all_active_listings, _SL())
+        _r, _u = await loop.run_in_executor(None, rescore_all_active_listings, _rescore_session)
         if _u:
             logger.info(f"Post-scan rescore: {_r} rescored, {_u} new deals after enrichment")
+        else:
+            logger.debug(f"Post-scan rescore: {_r} rescored, 0 new deals")
     except Exception as e:
-        logger.error(f"Post-scan rescore failed: {e}")
+        logger.error(f"Post-scan rescore failed: {e}", exc_info=True)
+    finally:
+        if _rescore_session is not None:
+            try:
+                _rescore_session.close()
+            except Exception:
+                pass
 
     # Individual per-scan alerts disabled — digest sent daily at 8am via scheduler
 
@@ -158,11 +249,28 @@ async def run_telegram_digest(telegram_alerter=None):
     return
 
 
-async def run_email_digest():
+async def run_email_digest(digest_id: str = "default"):
     import config as cfg
     if not cfg.SMTP_USER or not cfg.SMTP_PASSWORD:
         logger.info("Email digest skipped: SMTP credentials not set")
         return
+
+    # FIX #8 (DIGEST DEDUP): If Railway restarts close to the scheduled minute
+    # APScheduler may fire the same cron job twice. We throttle each named
+    # digest to at most once per 30 minutes.
+    async with _digest_lock:
+        last_sent = _digest_sent_at.get(digest_id)
+        now = datetime.utcnow()
+        if last_sent is not None:
+            elapsed_minutes = (now - last_sent).total_seconds() / 60
+            if elapsed_minutes < 30:
+                logger.warning(
+                    f"Email digest '{digest_id}' already sent {elapsed_minutes:.1f} min ago — "
+                    f"skipping duplicate"
+                )
+                return
+        _digest_sent_at[digest_id] = now
+
     try:
         from alerts.email_digest import send_daily_digest
         loop = asyncio.get_running_loop()
@@ -170,9 +278,11 @@ async def run_email_digest():
             None, send_daily_digest, cfg.SMTP_USER, cfg.SMTP_PASSWORD, cfg.DIGEST_RECIPIENT
         )
         if ok:
-            logger.info("Daily email digest sent")
+            logger.info(f"Daily email digest '{digest_id}' sent")
+        else:
+            logger.warning(f"Daily email digest '{digest_id}' returned failure")
     except Exception as e:
-        logger.error(f"Email digest failed: {e}")
+        logger.error(f"Email digest '{digest_id}' failed: {e}", exc_info=True)
 
 
 async def run_db_backup():
@@ -215,6 +325,25 @@ async def run_pricing_model_train():
 
 
 async def run_market_refresh():
+    # FIX #7 (MARKET REFRESH RACE): run_market_refresh() and run_scan() both
+    # call rescore_all_active_listings() and write to the same listings rows.
+    # A true DB-level race between two concurrent SQLAlchemy sessions would
+    # produce "last writer wins" semantics — score computed from stale market
+    # refs may overwrite a just-computed correct score.
+    #
+    # The asyncio.Lock below serialises them on the Python side. If the scan
+    # lock is held (scan is running), we wait for it to finish before starting
+    # the market refresh, preventing the two rescores from interleaving.
+    #
+    # Note: this intentionally does NOT skip the refresh — we wait, not bail.
+    if _scan_lock.locked():
+        logger.info("Market refresh waiting for in-progress scan to finish...")
+
+    async with _scan_lock:
+        await _run_market_refresh_inner()
+
+
+async def _run_market_refresh_inner():
     from database import SessionLocal
     from scorer import update_market_references, rescore_all_active_listings, update_segment_velocity
 
@@ -228,7 +357,7 @@ async def run_market_refresh():
         logger.info(f"Periodic rescore: {rescored} listings rescored, {upgraded} new deals found")
         await loop.run_in_executor(None, update_segment_velocity, session)
     except Exception as e:
-        logger.error(f"Market refresh failed: {e}")
+        logger.error(f"Market refresh failed: {e}", exc_info=True)
     finally:
         session.close()
 
@@ -283,33 +412,48 @@ async def main():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         scheduler = AsyncIOScheduler()
-        # Scan interval: controlled via SCAN_INTERVAL_MINUTES env var (default 30 min)
+
+        # FIX #1 (SCHEDULER OVERLAP): max_instances=1 prevents APScheduler from
+        # spawning a second copy of the job while the first is still executing.
+        # coalesce=True means that if multiple firings were missed (e.g. during
+        # a Railway cold-start blackout) only ONE catch-up run is triggered
+        # instead of a backlog of rapid-fire scans.
         scheduler.add_job(
             run_scan,
             "interval",
             minutes=cfg.SCAN_INTERVAL_MINUTES,
             args=[alerter],
             id="scan_periodic",
+            max_instances=1,
+            coalesce=True,
         )
         scheduler.add_job(
             run_market_refresh,
             "interval",
             hours=4,
             id="market_refresh",
+            max_instances=1,
+            coalesce=True,
         )
         scheduler.add_job(
             run_db_backup,
             "cron",
             hour=3, minute=0, timezone="UTC",  # 00hs Argentina
             id="db_backup",
+            max_instances=1,
+            coalesce=True,
         )
         scheduler.add_job(
             run_pricing_model_train,
             "interval",
             hours=24,
             id="pricing_model_train",
+            max_instances=1,
+            coalesce=True,
         )
         # Email digests — Argentina UTC-3: 6am=9UTC, 12pm=15UTC, 21hs=0UTC
+        # FIX #8 (DIGEST DEDUP): Each digest job passes its own id so the
+        # per-job 30-min dedup window in run_email_digest() can distinguish them.
         for digest_id, utc_hour in [("digest_6am", 9), ("digest_12pm", 15), ("digest_21hs", 0)]:
             scheduler.add_job(
                 run_email_digest,
@@ -318,6 +462,9 @@ async def main():
                 minute=0,
                 timezone="UTC",
                 id=digest_id,
+                kwargs={"digest_id": digest_id},
+                max_instances=1,
+                coalesce=True,
             )
         # Telegram digest — 8am Argentina = 11:00 UTC
         scheduler.add_job(
@@ -327,28 +474,50 @@ async def main():
             timezone="UTC",
             args=[alerter],
             id="telegram_digest_8am",
+            max_instances=1,
+            coalesce=True,
         )
         scheduler.start()
-        logger.info(f"Scheduler started: scans every {cfg.SCAN_INTERVAL_MINUTES}min, market refresh every 4h")
+        logger.info(
+            f"Scheduler started: scans every {cfg.SCAN_INTERVAL_MINUTES}min "
+            f"(max_instances=1, coalesce=True), market refresh every 4h"
+        )
     except Exception as e:
-        logger.error(f"Scheduler failed to start: {e}")
+        logger.error(f"Scheduler failed to start: {e}", exc_info=True)
         scheduler = None
 
+    # FIX #9 (FIRST SCAN + RAILWAY RESTART): The first scan + market refresh
+    # run sequentially at startup. If Railway SIGTERM's us mid-scan the signal
+    # handler sets stop_event, but the currently-awaited coroutine (run_scan or
+    # run_market_refresh) will run to completion before we reach stop_event.wait().
+    # This is the correct behaviour: we finish what we started and exit cleanly.
+    # The _scan_lock ensures the scheduler (which starts above) cannot fire a
+    # second scan while the startup scan is still running.
     console.print(f"\n[bold green]Running first scan...[/bold green]")
+    logger.info("Startup: beginning first scan")
     await run_scan(alerter)
+    logger.info("Startup: first scan complete")
 
     # Rescore immediately after first scan so listings scored with "cold"
     # during the scan get re-evaluated with newly accumulated comparables.
     console.print(f"\n[bold green]Running initial market refresh + rescore...[/bold green]")
+    logger.info("Startup: beginning initial market refresh")
     await run_market_refresh()
+    logger.info("Startup: initial market refresh complete")
 
     console.print(f"\n[bold green]Dashboard running at http://localhost:5000[/bold green]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
     stop_event = asyncio.Event()
 
+    # FIX #5 (SIGNAL HANDLING): Railway sends SIGTERM before killing the
+    # container. loop.add_signal_handler() is the correct asyncio-safe way to
+    # handle this — it schedules _request_shutdown() on the event loop without
+    # interrupting the currently-running coroutine. The existing implementation
+    # is correct; we add an explicit log so Railway's log tail shows the reason
+    # for exit clearly.
     def _request_shutdown():
-        logger.info("Shutdown requested (SIGTERM/SIGINT)")
+        logger.info("Shutdown requested via signal (SIGTERM/SIGINT) — finishing current work then exiting")
         stop_event.set()
 
     loop = asyncio.get_running_loop()
@@ -363,13 +532,15 @@ async def main():
     except KeyboardInterrupt:
         pass
     console.print("\n[yellow]Shutting down...[/yellow]")
-    logger.info("Shutdown requested")
+    logger.info("Shutdown: stopping scheduler")
     if scheduler:
         try:
             scheduler.shutdown(wait=False)
         except Exception as e:
             logger.warning(f"Scheduler shutdown failed: {e}")
+    logger.info("Shutdown: closing Telegram alerter")
     await alerter.shutdown()
+    logger.info("Shutdown complete")
     console.print("[green]Goodbye.[/green]")
 
 
