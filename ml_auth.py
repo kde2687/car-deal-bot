@@ -184,11 +184,12 @@ class MLTokenManager:
 
     def get_authorization_url(self) -> str:
         """Build the URL the user must visit to authorize the app."""
+        redirect_uri = f"{config.DASHBOARD_URL.rstrip('/')}/admin/ml_callback"
         return (
             f"{ML_AUTH_URL}"
             f"?response_type=code"
             f"&client_id={config.ML_APP_ID}"
-            f"&redirect_uri=https://cardeal.ar/admin/ml_callback"
+            f"&redirect_uri={redirect_uri}"
         )
 
 

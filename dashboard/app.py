@@ -427,7 +427,7 @@ def create_app() -> Flask:
                         "client_id": cfg.ML_APP_ID,
                         "client_secret": cfg.ML_CLIENT_SECRET,
                         "code": code,
-                        "redirect_uri": "https://cardeal.ar/admin/ml_callback",
+                        "redirect_uri": f"{cfg.DASHBOARD_URL.rstrip('/')}/admin/ml_callback",
                     },
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                     timeout=15.0,
